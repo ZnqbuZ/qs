@@ -12,10 +12,7 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 use tokio::select;
 use tokio::sync::mpsc;
-use tokio::sync::mpsc::error::TryRecvError;
-use tokio::task::yield_now;
 use tokio::time::sleep;
-use tracing::trace;
 
 #[derive(Debug, Deref, DerefMut)]
 pub(super) struct Runner {
@@ -46,7 +43,6 @@ impl Runner {
     pub(super) async fn run(&mut self) -> std::io::Result<()> {
         let mut pending_streams = VecDeque::new();
         let mut pending_wakers = Vec::new();
-        let mut inbox = Vec::new();
         let mut pending_transmits = VecDeque::new();
         let mut pending_chunks = VecDeque::new();
 
@@ -60,9 +56,6 @@ impl Runner {
         loop {
             let mut worked = false;
 
-            // 1. --- 准备阶段：获取 Inbox ---
-            swap(&mut *self.ctrl.inbox.lock(), &mut inbox);
-
             // 2. --- 核心逻辑：处理状态机 ---
             // [修复] 移除之前的 if !inbox.is_empty() || timeout 判断
             // 只要醒来，就必须检查状态机，因为可能需要发送握手包或者重传
@@ -71,7 +64,7 @@ impl Runner {
                 let now = Instant::now();
 
                 // 处理收到的包
-                for evt in inbox.drain(..) {
+                while let Some(evt) = self.ctrl.inbox.pop() {
                     state.conn.handle_event(evt);
                     worked = true;
                 }
@@ -129,7 +122,7 @@ impl Runner {
                 let mut transmits = VecDeque::new();
                 loop {
                     let mut buf = match chunk.buf(
-                        margins.len() + state.conn.current_mtu() as usize,
+                        state.conn.current_mtu() as usize,
                         margins,
                     ) {
                         Some(buf) => buf,
@@ -139,7 +132,7 @@ impl Runner {
                             transmits = VecDeque::new();
                             chunk
                                 .buf(
-                                    margins.len() + state.conn.current_mtu() as usize,
+                                    state.conn.current_mtu() as usize,
                                     margins,
                                 )
                                 .unwrap()

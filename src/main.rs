@@ -3,13 +3,11 @@ mod gateway;
 // 假设你的库名为 my_quic_lib，且相关模块是公开的
 // 如果是在同一个 crate 内部测试，使用 crate::gateway::quic...
 #[allow(unused_imports)]
-use crate::gateway::quic::{
-    QuicEndpoint, QuicOutputRx, QuicPacket, QuicPacketMargins, QuicStream,
-};
+use crate::gateway::quic::{QuicEndpoint, QuicOutputRx, QuicPacket, QuicPacketMargins, QuicStream};
+use bytes::{Bytes, BytesMut};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use bytes::{Bytes, BytesMut};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{info, trace};
 use tracing_subscriber::EnvFilter;
@@ -17,6 +15,16 @@ use tracing_subscriber::EnvFilter;
 // 模拟的客户端和服务器地址
 const SERVER_ADDR: &str = "127.0.0.1:4433";
 const CLIENT_ADDR: &str = "127.0.0.1:10000";
+
+const TEST1: bool = false;
+const PAYLOAD_SIZE_1: usize = 8192 * 1024 * 1024;
+
+const TEST2: bool = true;
+const ITERATION_COUNT: usize = 1_000_000;
+
+const TEST3: bool = true;
+const STREAM_COUNT: usize = 1;
+const PAYLOAD_SIZE_3: usize = 8192 * 1024 * 1024;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
@@ -31,16 +39,14 @@ async fn main() {
     };
 
     // 开启日志以便观察握手过程（可选）
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .init();
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 
     info!("=== 开始 QUIC 库性能基准测试 ===");
     info!("测试环境: 内存直连 (In-memory), 排除 OS UDP 栈干扰");
 
-    benchmark_throughput().await;
-    benchmark_latency_pps().await;
-    benchmark_concurrent_throughput().await;
+    if TEST1 { benchmark_throughput().await; }
+    if TEST2 { benchmark_latency_pps().await;}
+    if TEST3 { benchmark_concurrent_throughput().await;}
 }
 
 /// 测试 1: 最大单流吞吐量 (Bandwidth)
@@ -48,7 +54,10 @@ async fn benchmark_throughput() {
     trace!("--- 测试 1: 单流吞吐量 (1GB 数据传输) ---");
 
     let server_addr: SocketAddr = SERVER_ADDR.parse().unwrap();
-    let margins = QuicPacketMargins { header: 0, trailer: 0 };
+    let margins = QuicPacketMargins {
+        header: 0,
+        trailer: 0,
+    };
 
     // 2. 启动虚拟网络
 
@@ -80,7 +89,11 @@ async fn benchmark_throughput() {
         let mut count = 0;
         while let Some(pkt) = rx.recv().await {
             // 如果 send 返回 Err，说明 Server 已经关闭/崩溃，我们应该退出而不是 Panic
-            if s_arc.send(CLIENT_ADDR.parse().unwrap(), pkt.payload).await.is_err() {
+            if s_arc
+                .send(CLIENT_ADDR.parse().unwrap(), pkt.payload)
+                .await
+                .is_err()
+            {
                 break;
             }
 
@@ -100,7 +113,11 @@ async fn benchmark_throughput() {
         let mut rx = server_packet_rx;
         let mut count = 0;
         while let Some(pkt) = rx.recv().await {
-            if c_arc.send(SERVER_ADDR.parse().unwrap(), pkt.payload).await.is_err() {
+            if c_arc
+                .send(SERVER_ADDR.parse().unwrap(), pkt.payload)
+                .await
+                .is_err()
+            {
                 break;
             }
             // 同样加入 yield
@@ -122,7 +139,9 @@ async fn benchmark_throughput() {
             loop {
                 let n = stream.read(&mut buf).await.unwrap();
                 trace!("Server: 接收数据... 已接收 {} bytes", total_bytes + n);
-                if n == 0 { break; }
+                if n == 0 {
+                    break;
+                }
                 total_bytes += n;
             }
             trace!("Server: 数据接收完毕，总计 {} bytes", total_bytes);
@@ -158,7 +177,7 @@ async fn benchmark_throughput() {
 
         trace!("Client: 流已打开，开始发送数据...");
         // 拿到流之后继续业务逻辑...
-        let payload_size = 1024 * 1024 * 8192; // 1GB
+        let payload_size = PAYLOAD_SIZE_1; // 1GB
         let chunk_size = 64 * 1024;
         let data = vec![1u8; chunk_size];
 
@@ -178,13 +197,20 @@ async fn benchmark_throughput() {
     let mb = bytes as f64 / 1024.0 / 1024.0;
     let secs = duration.as_secs_f64();
     println!("传输: {:.2} MB, 耗时: {:.4} s", mb, secs);
-    println!("速度: {:.2} MB/s ({:.2} Gbps)", mb / secs, (mb * 8.0) / 1024.0 / secs);
+    println!(
+        "速度: {:.2} MB/s ({:.2} Gbps)",
+        mb / secs,
+        (mb * 8.0) / 1024.0 / secs
+    );
 }
 
 /// 测试 2: 延迟与 PPS (Ping-Pong)
 async fn benchmark_latency_pps() {
     println!("\n--- 测试 2: 往返延迟 (Latency) & PPS ---");
-    let margins = QuicPacketMargins { header: 0, trailer: 0 };
+    let margins = QuicPacketMargins {
+        header: 0,
+        trailer: 0,
+    };
     let (server, server_out) = QuicEndpoint::new(margins);
     let (client, client_out) = QuicEndpoint::new(margins);
 
@@ -202,14 +228,20 @@ async fn benchmark_latency_pps() {
         let mut rx = client_packet_rx;
         while let Some(pkt) = rx.recv().await {
             trace!("Network: Client -> Server packet");
-            s_arc.send(CLIENT_ADDR.parse().unwrap(), pkt.payload).await.unwrap();
+            s_arc
+                .send(CLIENT_ADDR.parse().unwrap(), pkt.payload)
+                .await
+                .unwrap();
         }
     });
     tokio::spawn(async move {
         let mut rx = server_packet_rx;
         while let Some(pkt) = rx.recv().await {
             trace!("Network: Server -> Client packet");
-            c_arc.send(SERVER_ADDR.parse().unwrap(), pkt.payload).await.unwrap();
+            c_arc
+                .send(SERVER_ADDR.parse().unwrap(), pkt.payload)
+                .await
+                .unwrap();
         }
     });
 
@@ -222,7 +254,9 @@ async fn benchmark_latency_pps() {
                     match stream.read(&mut buf).await {
                         Ok(0) => break,
                         Ok(n) => {
-                            if stream.write_all(&buf[..n]).await.is_err() { break; }
+                            if stream.write_all(&buf[..n]).await.is_err() {
+                                break;
+                            }
                         }
                         Err(_) => break,
                     }
@@ -256,7 +290,7 @@ async fn benchmark_latency_pps() {
 
     let payload = vec![0u8; 64]; // 小包 64字节
     let mut buf = vec![0u8; 1024];
-    let iterations = 100_000;
+    let iterations = ITERATION_COUNT;
 
     let start = Instant::now();
     for _ in 0..iterations {
@@ -277,11 +311,14 @@ async fn benchmark_latency_pps() {
 async fn benchmark_concurrent_throughput() {
     info!("\n--- 测试 3: 多流并发吞吐量 (Concurrent Throughput) ---");
     // 参数配置
-    let stream_count = 100; // 并发流数量
-    let size_per_stream = 10 * 1024 * 1024; // 每个流发送 10MB
+    let stream_count = STREAM_COUNT; // 并发流数量
+    let size_per_stream = PAYLOAD_SIZE_3; // 每个流发送 10MB
     let total_expected = stream_count as u64 * size_per_stream as u64;
 
-    let margins = QuicPacketMargins { header: 0, trailer: 0 };
+    let margins = QuicPacketMargins {
+        header: 0,
+        trailer: 0,
+    };
     // 创建新的端点实例，环境是隔离的
     let (server, server_out) = QuicEndpoint::new(margins);
     let (client, client_out) = QuicEndpoint::new(margins);
@@ -302,17 +339,46 @@ async fn benchmark_concurrent_throughput() {
     // Client -> Server
     tokio::spawn(async move {
         let mut rx = client_packet_rx;
+        // 使用 limit 限制每次连续处理的包数量，避免单次占用时间过长
+        let mut count = 0;
         while let Some(pkt) = rx.recv().await {
-            // 模拟网络传输，无延迟无丢包
-            let _ = s_arc.send(CLIENT_ADDR.parse().unwrap(), pkt.payload).await;
+            // 如果 send 返回 Err，说明 Server 已经关闭/崩溃，我们应该退出而不是 Panic
+            if s_arc
+                .send(CLIENT_ADDR.parse().unwrap(), pkt.payload)
+                .await
+                .is_err()
+            {
+                break;
+            }
+
+            // 每转发 16 个包，强制让出一次 CPU
+            // 这给了 Server 处理包和生成 ACK 的机会，也给了另一个网络任务转发 ACK 的机会
+            count += 1;
+            if count >= 16 {
+                count = 0;
+                tokio::task::yield_now().await;
+            }
         }
     });
 
     // Server -> Client
     tokio::spawn(async move {
         let mut rx = server_packet_rx;
+        let mut count = 0;
         while let Some(pkt) = rx.recv().await {
-            let _ = c_arc.send(SERVER_ADDR.parse().unwrap(), pkt.payload).await;
+            if c_arc
+                .send(SERVER_ADDR.parse().unwrap(), pkt.payload)
+                .await
+                .is_err()
+            {
+                break;
+            }
+            // 同样加入 yield
+            count += 1;
+            if count >= 16 {
+                count = 0;
+                tokio::task::yield_now().await;
+            }
         }
     });
 
@@ -322,20 +388,23 @@ async fn benchmark_concurrent_throughput() {
         let mut total_bytes_received = 0;
 
         // 我们预期接收 stream_count 个流
-        for _ in 0..stream_count {
-            if let Some(mut stream) = server_new_streams.recv().await {
-                join_set.spawn(async move {
-                    let mut buf = vec![0u8; 64 * 1024]; // 64KB buffer
-                    let mut stream_received = 0;
-                    loop {
-                        match stream.read(&mut buf).await {
-                            Ok(0) => break, // EOF
-                            Ok(n) => stream_received += n,
-                            Err(_) => break, // Error or Reset
-                        }
+        let mut accepted_count = 0;
+        while let Some(mut stream) = server_new_streams.recv().await {
+            join_set.spawn(async move {
+                let mut buf = vec![0u8; 64 * 1024]; // 64KB buffer
+                let mut stream_received = 0;
+                loop {
+                    match stream.read(&mut buf).await {
+                        Ok(0) => break, // EOF
+                        Ok(n) => stream_received += n,
+                        Err(_) => break, // Error or Reset
                     }
-                    stream_received
-                });
+                }
+                stream_received
+            });
+            accepted_count += 1;
+            if accepted_count > stream_count {
+                break;
             }
         }
 
@@ -357,7 +426,7 @@ async fn benchmark_concurrent_throughput() {
                     // 握手成功，关闭这个探测流
                     let _ = s.shutdown().await;
                     break;
-                },
+                }
                 Err(_) => tokio::time::sleep(Duration::from_millis(5)).await,
             }
         }
@@ -383,6 +452,7 @@ async fn benchmark_concurrent_throughput() {
                     sent += data.len();
                 }
                 // 关闭写端，发送 FIN
+                info!("Client: Stream {} sent {} bytes, shutting down", i, sent);
                 stream.shutdown().await.expect("Shutdown failed");
                 trace!("Client: Stream {} finished", i);
             });
@@ -408,7 +478,14 @@ async fn benchmark_concurrent_throughput() {
 
     info!("--- 测试结果 ---");
     info!("并发流数量: {}", stream_count);
-    info!("总接收数据: {:.2} MB (预期: {:.2} MB)", mb, total_expected as f64 / 1024.0 / 1024.0);
+    info!(
+        "总接收数据: {:.2} MB (预期: {:.2} MB)",
+        mb,
+        total_expected as f64 / 1024.0 / 1024.0
+    );
     info!("总耗时: {:.4} s", secs);
-    info!("聚合带宽: {:.2} MB/s ({:.2} Gbps)", throughput_mb, throughput_gbps);
+    info!(
+        "聚合带宽: {:.2} MB/s ({:.2} Gbps)",
+        throughput_mb, throughput_gbps
+    );
 }

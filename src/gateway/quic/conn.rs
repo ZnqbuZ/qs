@@ -1,5 +1,5 @@
 use crate::gateway::quic::stream::QuicStream;
-use derive_more::{Deref, DerefMut};
+use crossbeam::queue::ArrayQueue;
 use parking_lot::Mutex;
 use quinn_proto::{Connection, ConnectionEvent, Dir, StreamId, VarInt};
 use std::collections::HashMap;
@@ -9,7 +9,6 @@ use std::sync::Arc;
 use std::task::Waker;
 use std::time::Instant;
 use tokio::sync::Notify;
-use tracing::{info, trace};
 
 #[derive(Debug)]
 pub(super) struct ConnState {
@@ -82,21 +81,14 @@ impl From<ConnState> for SharedConnState {
     }
 }
 
-#[derive(Debug, Clone, Deref, DerefMut)]
-pub(crate) struct SharedConnInbox(Arc<Mutex<Vec<ConnectionEvent>>>);
-
-impl From<Vec<ConnectionEvent>> for SharedConnInbox {
-    fn from(inbox: Vec<ConnectionEvent>) -> Self {
-        SharedConnInbox(Arc::new(Mutex::new(inbox)))
-    }
-}
+type ConnInbox = Arc<ArrayQueue<ConnectionEvent>>;
 
 const QUIC_CONN_INBOX_CAPACITY: usize = 1024;
 
 #[derive(Debug, Clone)]
 pub(super) struct ConnCtrl {
     pub(super) state: SharedConnState,
-    pub(super) inbox: SharedConnInbox,
+    pub(super) inbox: ConnInbox,
     pub(super) notify: Arc<Notify>,
 }
 
@@ -104,21 +96,13 @@ impl ConnCtrl {
     pub(super) fn new(conn: Connection) -> Self {
         Self {
             state: ConnState::new(conn).into(),
-            inbox: SharedConnInbox::from(Vec::with_capacity(QUIC_CONN_INBOX_CAPACITY)),
+            inbox: ArrayQueue::new(QUIC_CONN_INBOX_CAPACITY).into(),
             notify: Arc::new(Notify::new()),
         }
     }
 
     pub(super) fn send(&self, evt: ConnectionEvent) {
-        if let Some(mut state) = self.state.try_lock() {
-            state.conn.handle_event(evt);
-        } else {
-            let mut inbox = self.inbox.lock();
-            if inbox.len() >= QUIC_CONN_INBOX_CAPACITY {
-                return;
-            }
-            inbox.push(evt);
-        }
+        let _ = self.inbox.push(evt);
         self.notify.notify_one();
     }
 
