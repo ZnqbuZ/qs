@@ -1,14 +1,16 @@
 use crate::gateway::quic::stream::QuicStream;
-use crossbeam::queue::ArrayQueue;
+use crossbeam::queue::{ArrayQueue, SegQueue};
 use parking_lot::Mutex;
 use quinn_proto::{Connection, ConnectionEvent, Dir, StreamId, VarInt};
 use std::collections::HashMap;
 use std::io::{Error, Result};
 use std::iter::chain;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::task::Waker;
 use std::time::Instant;
-use tokio::sync::Notify;
+use tokio::sync::{oneshot, Notify};
+use tokio::sync::oneshot::error::RecvError;
 
 #[derive(Debug)]
 pub(super) struct ConnState {
@@ -81,23 +83,31 @@ impl From<ConnState> for SharedConnState {
     }
 }
 
-type ConnInbox = Arc<ArrayQueue<ConnectionEvent>>;
+type ConnEvtQueue = Arc<ArrayQueue<ConnectionEvent>>;
+type StreamOpenQueue = Arc<SegQueue<(Dir, oneshot::Sender<Result<StreamId>>)>>;
+type StreamCloseQueue = Arc<SegQueue<StreamId>>;
 
-const QUIC_CONN_INBOX_CAPACITY: usize = 1024;
+const QUIC_CONN_EVT_QUEUE_CAPACITY: usize = 1024;
 
 #[derive(Debug, Clone)]
 pub(super) struct ConnCtrl {
     pub(super) state: SharedConnState,
-    pub(super) inbox: ConnInbox,
+    pub(super) inbox: ConnEvtQueue,
+    pub(super) open: StreamOpenQueue,
+    pub(super) close: StreamCloseQueue,
     pub(super) notify: Arc<Notify>,
+    pub(super) shutdown: Arc<AtomicBool>,
 }
 
 impl ConnCtrl {
     pub(super) fn new(conn: Connection) -> Self {
         Self {
             state: ConnState::new(conn).into(),
-            inbox: ArrayQueue::new(QUIC_CONN_INBOX_CAPACITY).into(),
+            inbox: ArrayQueue::new(QUIC_CONN_EVT_QUEUE_CAPACITY).into(),
+            open: SegQueue::new().into(),
+            close: SegQueue::new().into(),
             notify: Arc::new(Notify::new()),
+            shutdown: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -106,9 +116,21 @@ impl ConnCtrl {
         self.notify.notify_one();
     }
 
-    pub(super) fn open(&self, dir: Dir) -> Result<QuicStream> {
-        let id = self.state.lock().open(dir)?;
+    pub(super) async fn open(&self, dir: Dir) -> Result<QuicStream> {
+        let (tx, rx) = oneshot::channel();
+        self.open.push((dir, tx));
         self.notify.notify_one();
+        let id = rx.await.map_err(|e| Error::other(format!("Failed to receive stream ID from runner: {:?}", e)))??;
         Ok(QuicStream::new(id, self.clone()))
+    }
+    
+    pub(super) fn close(&self, id: StreamId) {
+        self.close.push(id);
+        self.notify.notify_one();
+    }
+    
+    pub(super) fn shutdown(&self) {
+        self.shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.notify.notify_one();
     }
 }

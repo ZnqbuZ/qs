@@ -7,12 +7,11 @@ use derive_more::{Deref, DerefMut};
 use quinn_proto::{Connection, Event, StreamEvent};
 use std::collections::VecDeque;
 use std::io::{Error, ErrorKind};
-use std::mem::swap;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 use tokio::select;
-use tokio::sync::mpsc;
 use tokio::time::sleep;
+use tracing::error;
 
 #[derive(Debug, Deref, DerefMut)]
 pub(super) struct Runner {
@@ -20,19 +19,16 @@ pub(super) struct Runner {
     #[deref_mut]
     ctrl: ConnCtrl,
 
-    drop_rx: StreamDropRx,
     output: QuicOutputTx,
 }
 
 impl Runner {
     pub(super) fn new(conn: Connection, output: QuicOutputTx) -> (ConnCtrl, Self) {
-        let (drop_tx, drop_rx) = mpsc::channel(128);
         let ctrl = ConnCtrl::new(conn);
         (
             ctrl.clone(),
             Self {
                 ctrl,
-                drop_rx,
                 output,
             },
         )
@@ -54,6 +50,10 @@ impl Runner {
         self.ctrl.notify.notify_one();
 
         loop {
+            if self.ctrl.shutdown.load(Ordering::Relaxed) {
+                return Ok(());
+            }
+
             let mut worked = false;
 
             // 2. --- 核心逻辑：处理状态机 ---
@@ -77,16 +77,18 @@ impl Runner {
                     worked = true; // 标记为工作过，防止 cpu 空转
                 }
 
+                // 处理流开启
+                while let Some((dir, tx)) = self.ctrl.open.pop() {
+                    let id = state.conn.streams().open(dir).ok_or(Error::other("Failed to open new QUIC stream: exhausted"));
+                    if let Err(e) = tx.send(id) {
+                        error!("Failed to send stream ID to ctrl: {:?}", e);
+                    }
+                }
+
                 // 处理流关闭
-                // loop {
-                //     match self.drop_rx.try_recv() {
-                //         Ok(id) => state.close(id),
-                //         Err(TryRecvError::Empty) => break,
-                //         Err(TryRecvError::Disconnected) => {
-                //             return Err(Error::other("Stream drop channel closed"));
-                //         }
-                //     }
-                // }
+                while let Some(id) = self.ctrl.close.pop() {
+                    state.close(id);
+                }
 
                 // 驱动状态机 (处理握手、流开启等)
                 while let Some(evt) = state.conn.poll() {
@@ -119,7 +121,6 @@ impl Runner {
                 // 生成待发送数据包
                 let margins = self.output.packet.margins;
                 let mut chunk = BufAcc::new(256 * 1200);
-                let mut transmits = VecDeque::new();
                 loop {
                     let mut buf = match chunk.buf(
                         state.conn.current_mtu() as usize,
@@ -128,8 +129,6 @@ impl Runner {
                         Some(buf) => buf,
                         None => {
                             pending_chunks.push_back(chunk.renew());
-                            pending_transmits.push_back(transmits);
-                            transmits = VecDeque::new();
                             chunk
                                 .buf(
                                     state.conn.current_mtu() as usize,
@@ -144,14 +143,11 @@ impl Runner {
                             if !chunk.is_empty() {
                                 pending_chunks.push_back(chunk.take());
                             }
-                            if !transmits.is_empty() {
-                                pending_transmits.push_back(transmits);
-                            }
                             break;
                         }
                         Some(transmit) => {
                             buf.commit();
-                            transmits.push_back(transmit);
+                            pending_transmits.push_back(transmit);
                         }
                     }
                 }
@@ -174,13 +170,9 @@ impl Runner {
                     res = self.output.packet.reserve(), if !pending_transmits.is_empty() => {
                         match res {
                             Ok(permit) => {
-                                let transmits = pending_transmits.front_mut().unwrap();
+                                let transmit = pending_transmits.pop_front().unwrap();
                                 let chunk = pending_chunks.front_mut().unwrap();
-                                let transmit = transmits.pop_front().unwrap();
                                 let data = chunk.split_to(header + transmit.size + trailer);
-                                if transmits.is_empty() {
-                                    pending_transmits.pop_front();
-                                }
                                 if chunk.is_empty() {
                                     pending_chunks.pop_front();
                                 }

@@ -20,11 +20,11 @@ const TEST1: bool = false;
 const PAYLOAD_SIZE_1: usize = 8192 * 1024 * 1024;
 
 const TEST2: bool = true;
-const ITERATION_COUNT: usize = 1_000_000;
+const ITERATION_COUNT: usize = 100_000;
 
 const TEST3: bool = true;
-const STREAM_COUNT: usize = 1;
-const PAYLOAD_SIZE_3: usize = 8192 * 1024 * 1024;
+const STREAM_COUNT: usize = 4;
+const PAYLOAD_SIZE_3: usize = 4096 * 1024 * 1024;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {

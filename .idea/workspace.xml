@@ -28,12 +28,12 @@
     </cargoProject>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="ec1f0d40-3ac5-4f78-ac6d-97b72ebc55d6" name="更改" comment="add len() method to margins, add original ptr to BufAccWriter for safety">
+    <list default="true" id="ec1f0d40-3ac5-4f78-ac6d-97b72ebc55d6" name="更改" comment="replace ConnInbox with crossbeam ArrayQueue">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Cargo.lock" beforeDir="false" afterPath="$PROJECT_DIR$/Cargo.lock" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/Cargo.toml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/gateway/quic/conn.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/gateway/quic/conn.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/gateway/quic/endpoint.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/gateway/quic/endpoint.rs" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/gateway/quic/runner.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/gateway/quic/runner.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/gateway/quic/stream.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/gateway/quic/stream.rs" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/main.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/main.rs" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -170,7 +170,7 @@
       <workItem from="1767910797853" duration="63000" />
       <workItem from="1767910931766" duration="651000" />
       <workItem from="1767947959986" duration="16408000" />
-      <workItem from="1768136606815" duration="30505000" />
+      <workItem from="1768136606815" duration="34271000" />
     </task>
     <task id="LOCAL-00001" summary="Refactor QUIC module structure and improve performance benchmarks">
       <option name="closed" value="true" />
@@ -236,7 +236,15 @@
       <option name="project" value="LOCAL" />
       <updated>1768165511089</updated>
     </task>
-    <option name="localTasksCounter" value="9" />
+    <task id="LOCAL-00009" summary="replace ConnInbox with crossbeam ArrayQueue">
+      <option name="closed" value="true" />
+      <created>1768169182538</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1768169182538</updated>
+    </task>
+    <option name="localTasksCounter" value="10" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -262,7 +270,8 @@
     <MESSAGE value="Refactor QUIC connection and endpoint structures for improved readability and maintainability" />
     <MESSAGE value="fix timeout, comment out stream drop" />
     <MESSAGE value="add len() method to margins, add original ptr to BufAccWriter for safety" />
-    <option name="LAST_COMMIT_MESSAGE" value="add len() method to margins, add original ptr to BufAccWriter for safety" />
+    <MESSAGE value="replace ConnInbox with crossbeam ArrayQueue" />
+    <option name="LAST_COMMIT_MESSAGE" value="replace ConnInbox with crossbeam ArrayQueue" />
   </component>
   <component name="XSLT-Support.FileAssociations.UIState">
     <expand />

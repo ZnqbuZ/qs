@@ -22,7 +22,7 @@ pub struct QuicStream {
 }
 
 impl QuicStream {
-    pub(crate) fn new(id: StreamId, ctrl: ConnCtrl) -> Self {
+    pub(super) fn new(id: StreamId, ctrl: ConnCtrl) -> Self {
         Self {
             id,
             ctrl,
@@ -145,5 +145,11 @@ impl AsyncWrite for QuicStream {
                 format!("QUIC stream has been stopped by peer: {:?}", error),
             ))),
         }
+    }
+}
+
+impl Drop for QuicStream {
+    fn drop(&mut self) {
+        self.ctrl.close(self.id);
     }
 }

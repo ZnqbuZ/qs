@@ -23,7 +23,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
-use tracing::{error, trace};
+use tracing::{error, info, trace};
 
 type RunnerTx = mpsc::UnboundedSender<RunnerGuard>;
 type RunnerRx = mpsc::UnboundedReceiver<RunnerGuard>;
@@ -72,6 +72,7 @@ impl Driver {
                 }
             });
         }
+        info!("Driver exited.");
     }
 }
 
@@ -259,7 +260,7 @@ impl QuicEndpoint {
 
     pub async fn open(&self, addr: SocketAddr, header: Option<BytesMut>) -> Result<QuicStream> {
         let ctrl = self.connect(addr, "")?;
-        let stream = ctrl.open(Dir::Bi)?;
+        let stream = ctrl.open(Dir::Bi).await?;
         if let Some(header) = header {
             self.send(addr, header).await?;
         }
@@ -309,5 +310,14 @@ impl QuicEndpoint {
 
             None => Ok(()),
         }
+    }
+}
+
+impl Drop for QuicEndpoint {
+    fn drop(&mut self) {
+        self.ctrls.alter_all(|_, ctrl| {
+            ctrl.shutdown();
+            ctrl
+        })
     }
 }
