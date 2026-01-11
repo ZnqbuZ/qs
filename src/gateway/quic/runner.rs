@@ -124,12 +124,13 @@ impl Runner {
                 }
 
                 // 生成待发送数据包
+                let margins = self.output.packet.margins;
                 let mut chunk = BufAcc::new(256 * 1200);
                 let mut transmits = VecDeque::new();
                 loop {
                     let mut buf = match chunk.buf(
-                        state.conn.current_mtu() as usize,
-                        self.output.packet.margins,
+                        margins.len() + state.conn.current_mtu() as usize,
+                        margins,
                     ) {
                         Some(buf) => buf,
                         None => {
@@ -138,8 +139,8 @@ impl Runner {
                             transmits = VecDeque::new();
                             chunk
                                 .buf(
-                                    state.conn.current_mtu() as usize,
-                                    self.output.packet.margins,
+                                    margins.len() + state.conn.current_mtu() as usize,
+                                    margins,
                                 )
                                 .unwrap()
                         }

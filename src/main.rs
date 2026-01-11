@@ -9,6 +9,7 @@ use crate::gateway::quic::{
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use bytes::{Bytes, BytesMut};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{info, trace};
 use tracing_subscriber::EnvFilter;

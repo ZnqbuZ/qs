@@ -54,6 +54,12 @@ pub struct BufMargins {
     pub trailer: usize,
 }
 
+impl BufMargins {
+    pub fn len(&self) -> usize {
+        self.header + self.trailer
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct BufPool {
     pool: BytesMut,
@@ -70,9 +76,7 @@ impl BufPool {
     }
 
     pub(super) fn buf(&mut self, data: &[u8], margins: BufMargins) -> BytesMut {
-        let (header, trailer) = margins.into();
-
-        let len = header + data.len() + trailer;
+        let len = margins.len() + data.len();
 
         if len > self.pool.capacity() {
             let additional = max(len * 4, self.min_capacity);
@@ -83,6 +87,7 @@ impl BufPool {
         }
 
         let mut buf = self.pool.split_to(len);
+        let (header, trailer) = margins.into();
         buf[header..len - trailer].copy_from_slice(data);
         buf
     }
@@ -103,19 +108,23 @@ impl BufAcc {
         }
     }
 
-    pub(super) fn buf(&mut self, capacity:usize, margins: BufMargins) -> Option<BufAccWriter<'_>> {
-        let (header, trailer) = margins.into();
-        if self.acc.len() + header + capacity + trailer > self.acc.capacity() {
+    pub(super) fn buf(&mut self, capacity: usize, margins: BufMargins) -> Option<BufAccWriter<'_>> {
+        if self.acc.len() + margins.len() + capacity >= self.acc.capacity() {
             return None;
         }
 
         let buf = unsafe {
-            let ptr = self.acc.as_mut_ptr().add(self.acc.len());
-            ManuallyDrop::new(Vec::from_raw_parts(ptr.add(margins.header), 0, capacity))
+            let ptr = self
+                .acc
+                .as_mut_ptr()
+                .add(self.acc.len())
+                .add(margins.header);
+            ManuallyDrop::new(Vec::from_raw_parts(ptr, 0, capacity))
         };
 
         Some(BufAccWriter {
             acc: &mut self.acc,
+            ptr: buf.as_ptr(),
             buf,
             capacity,
             margins,
@@ -140,6 +149,7 @@ impl From<BufAcc> for BytesMut {
 #[derive(Debug, Deref, DerefMut)]
 pub(super) struct BufAccWriter<'t> {
     acc: &'t mut BytesMut,
+    ptr: *const u8,
     #[deref]
     #[deref_mut]
     buf: ManuallyDrop<Vec<u8>>,
@@ -149,13 +159,12 @@ pub(super) struct BufAccWriter<'t> {
 
 impl<'t> BufAccWriter<'t> {
     pub(super) fn commit(self) {
+        debug_assert!(self.buf.as_ptr() == self.ptr);
         let written = self.buf.len();
-        let (header, trailer) = self.margins.into();
-        let len = header + written + trailer;
-        debug_assert!(len <= self.capacity);
+        debug_assert!(written <= self.capacity);
         unsafe {
             self.acc
-                .set_len(self.acc.len() + len)
+                .set_len(self.acc.len() + self.margins.len() + written)
         };
     }
 }
