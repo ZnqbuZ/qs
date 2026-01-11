@@ -15,7 +15,8 @@ tracing = "0.1.44"
 futures = "0.3.31"
 tokio-util = "0.7.18"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
-log = "0.4.29"
+console-subscriber = "0.5.0"
+dashmap = "7.0.0-rc2"
 
 [profile.release]
 debug = true  # 关键！保留函数名符号，但不影响优化等级

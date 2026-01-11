@@ -6,7 +6,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::mpsc;
 use tracing::trace;
 use crate::gateway::quic2::conn::{ConnCtrl, ConnState};
-use crate::gateway::quic2::utils::{QuicBufferPool, SwitchedReceiver, SwitchedSender};
+use crate::gateway::quic2::utils::{BufferPool, SwitchedReceiver, SwitchedSender};
 
 pub(crate) type QuicStreamTx = SwitchedSender<QuicStream>;
 pub type QuicStreamRx = SwitchedReceiver<QuicStream>;
@@ -18,7 +18,7 @@ pub(crate) type StreamDropRx = mpsc::Receiver<StreamId>;
 pub struct QuicStream {
     pub(crate) id: StreamId,
     ctrl: ConnCtrl,
-    pool: QuicBufferPool,
+    pool: BufferPool,
 }
 
 impl QuicStream {
@@ -26,7 +26,7 @@ impl QuicStream {
         Self {
             id,
             ctrl,
-            pool: QuicBufferPool::new(2048),
+            pool: BufferPool::new(2048),
         }
     }
 }
@@ -133,7 +133,8 @@ impl AsyncWrite for QuicStream {
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        match self.ctrl.state.lock().conn.send_stream(self.id).finish() {
+        let finish = self.ctrl.state.lock().conn.send_stream(self.id).finish();
+        match finish {
             Ok(()) => {
                 self.ctrl.notify.notify_one();
                 Poll::Ready(Ok(()))

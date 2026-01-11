@@ -1,10 +1,12 @@
 use std::net::SocketAddr;
 use bytes::BytesMut;
-use derive_more::{Constructor, Deref, DerefMut};
+use derive_more::{Constructor, Deref, DerefMut, From, Into};
 use quinn_proto::Transmit;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::{SendError, TrySendError};
-use crate::gateway::quic2::utils::{QuicBufferMargins, QuicBufferPool};
+use crate::gateway::quic2::utils::{QuicBufferMargins, BufferPool};
+
+const PACKET_POOL_MIN_CAPACITY: usize = 65536;
 
 #[derive(Debug, Constructor)]
 pub struct QuicPacket {
@@ -14,62 +16,32 @@ pub struct QuicPacket {
 
 pub type QuicPacketMargins = QuicBufferMargins;
 
-#[derive(Deref, DerefMut, Debug)]
-pub(crate) struct QuicPacketTx {
-    #[deref]
-    #[deref_mut]
-    tx: mpsc::Sender<QuicPacket>,
-    pool: QuicBufferPool,
-    margins: QuicPacketMargins,
-}
+#[derive(Debug)]
+pub(super) struct PacketPool(BufferPool);
 
-impl QuicPacketTx {
-    pub(crate) fn new(tx: mpsc::Sender<QuicPacket>, margins: QuicPacketMargins) -> Self {
-        Self {
-            tx,
-            pool: QuicBufferPool::new(margins.header + margins.trailer),
-            margins,
-        }
+impl PacketPool {
+    pub(super) fn new() -> Self {
+        Self(BufferPool::new(PACKET_POOL_MIN_CAPACITY))
     }
 
-    pub(crate) fn pack(&mut self, addr: SocketAddr, data: &[u8]) -> QuicPacket {
+    pub(super) fn pack(&mut self, addr: SocketAddr, data: &[u8], margins: QuicPacketMargins) -> QuicPacket {
         QuicPacket {
             addr,
-            payload: self.pool.buf(data, self.margins),
+            payload: self.0.buf(data, margins),
         }
     }
 
-    pub(crate) fn pack_transmit(&mut self, transmit: Transmit, buf: &Vec<u8>) -> QuicPacket {
-        self.pack(transmit.destination, &buf[..transmit.size])
-    }
-
-    pub(crate) async fn send_transmit(
-        &mut self,
-        transmit: Transmit,
-        buf: &Vec<u8>,
-    ) -> Result<(), SendError<QuicPacket>> {
-        let packet = self.pack_transmit(transmit, buf);
-        self.send(packet).await
-    }
-
-    pub(crate) fn try_send_transmit(
-        &mut self,
-        transmit: Transmit,
-        buf: &Vec<u8>,
-    ) -> std::result::Result<(), TrySendError<QuicPacket>> {
-        let packet = self.pack_transmit(transmit, buf);
-        self.try_send(packet)
+    pub(super) fn pack_transmit(&mut self, transmit: Transmit, buf: &Vec<u8>, margins: QuicPacketMargins) -> QuicPacket {
+        self.pack(transmit.destination, &buf[..transmit.size], margins)
     }
 }
 
-impl Clone for QuicPacketTx {
-    fn clone(&self) -> Self {
-        Self {
-            tx: self.tx.clone(),
-            pool: QuicBufferPool::new(self.pool.min_capacity),
-            margins: self.margins.clone(),
-        }
-    }
+#[derive(Debug, Clone, Deref, DerefMut, Constructor)]
+pub(super) struct QuicPacketTx {
+    #[deref]
+    #[deref_mut]
+    packet: mpsc::Sender<QuicPacket>,
+    pub(super) margins: QuicPacketMargins,
 }
 
 pub type QuicPacketRx = mpsc::Receiver<QuicPacket>;

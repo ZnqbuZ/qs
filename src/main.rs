@@ -1,253 +1,31 @@
 mod gateway;
 
-use anyhow::Result;
+// 假设你的库名为 my_quic_lib，且相关模块是公开的
+// 如果是在同一个 crate 内部测试，使用 crate::gateway::quic2...
+#[allow(unused_imports)]
+use crate::gateway::quic2::{
+    QuicEndpoint, QuicOutputRx, QuicPacket, QuicPacketMargins, QuicStream,
+};
 use bytes::{Bytes, BytesMut};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::thread::sleep;
 use std::time::{Duration, Instant};
-use log::error;
+use futures::pending;
+use parking_lot::Mutex;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::oneshot;
+use tokio::sync::mpsc;
 use tracing::{info, trace};
 use tracing_subscriber::EnvFilter;
-// 假设你的库名为 my_quic_lib
-// use my_quic_lib::gateway::quic::{QuicEndpoint, QuicPacketMargins, QuicCtrl, QuicPacket};
-// 这里使用你提供的代码中的路径，你需要根据实际情况调整 use 路径
+use crate::gateway::quic2::QuicPacketRx;
 
-// --- 模拟网络转发层 ---
-// 它的作用是把 Server 出去的包塞给 Client 的输入，反之亦然。
-// 这样完全跳过了 UDP Socket 系统调用，只测试逻辑性能。
-async fn run_virtual_network(
-    mut server_pkt_rx: crate::gateway::quic::QuicPacketRx,
-    server_ctrl: Arc<crate::gateway::quic::QuicCtrl>,
-    mut client_pkt_rx: crate::gateway::quic::QuicPacketRx,
-    client_ctrl: Arc<crate::gateway::quic::QuicCtrl>,
-    client_addr: SocketAddr,
-    server_addr: SocketAddr,
-) {
-    let s2c = tokio::spawn(async move {
-        while let Some(mut pkt) = server_pkt_rx.recv().await {
-            // 在真实网络中，IP头会被剥离，这里我们模拟接收端看到的“对端地址”
-            // Server 发给 Client，Client 收到时看到的是 Server 的地址
-            pkt.addr = server_addr;
-            if let Err(e) = client_ctrl.send(pkt).await {
-                error!("Virtual network: failed to forward packet from server to client: {}", e);
-                break;
-            }
-        }
-    });
+// 模拟的客户端和服务器地址
+const SERVER_ADDR: &str = "127.0.0.1:4433";
+const CLIENT_ADDR: &str = "127.0.0.1:10000";
 
-    let c2s = tokio::spawn(async move {
-        while let Some(mut pkt) = client_pkt_rx.recv().await {
-            // Client 发给 Server，Server 收到时看到的是 Client 的地址
-            pkt.addr = client_addr;
-            if let Err(e) = server_ctrl.send(pkt).await {
-                error!("Virtual network: failed to forward packet from client to server: {}", e);
-                break;
-            }
-        }
-    });
-
-    // 等待任意一方断开
-    let _ = tokio::select! {
-        _ = s2c => {},
-        _ = c2s => {},
-    };
-}
-
-// --- 基础环境搭建 ---
-struct TestEnv {
-    server: crate::gateway::quic::QuicEndpoint,
-    client: crate::gateway::quic::QuicEndpoint,
-    server_ctrl: Arc<crate::gateway::quic::QuicCtrl>,
-    client_ctrl: Arc<crate::gateway::quic::QuicCtrl>,
-    server_stream_rx: crate::gateway::quic::QuicStreamRx,
-    _network_handle: tokio::task::JoinHandle<()>,
-}
-
-async fn setup_env() -> TestEnv {
-    let server_addr: SocketAddr = "127.0.0.1:5000".parse().unwrap();
-    let client_addr: SocketAddr = "127.0.0.1:6000".parse().unwrap();
-    let margins = crate::gateway::quic::QuicPacketMargins { header: 0, trailer: 0 };
-
-    // 1. 启动 Server
-    let mut server = crate::gateway::quic::QuicEndpoint::new();
-    let (server_pkt_rx, server_stream_rx) = server.run(margins).unwrap();
-    let server_ctrl = server.ctrl().unwrap();
-
-    // 2. 启动 Client
-    let mut client = crate::gateway::quic::QuicEndpoint::new();
-    let (client_pkt_rx, _client_stream_rx) = client.run(margins).unwrap();
-    _client_stream_rx.switch().set(false);
-    let client_ctrl = client.ctrl().unwrap();
-
-    // 3. 启动虚拟网络
-    let s_ctrl_clone = server_ctrl.clone();
-    let c_ctrl_clone = client_ctrl.clone();
-    let net_handle = tokio::spawn(async move {
-        run_virtual_network(server_pkt_rx, s_ctrl_clone, client_pkt_rx, c_ctrl_clone, client_addr, server_addr).await;
-    });
-
-    TestEnv {
-        server,
-        client,
-        server_ctrl,
-        client_ctrl,
-        server_stream_rx,
-        _network_handle: net_handle,
-    }
-}
-
-// --- 测试场景 1: 最大吞吐量 (Bulk Transfer) ---
-async fn bench_throughput(total_size_mb: usize) {
-    trace!("=== 开始测试: 吞吐量 ({} MB) ===", total_size_mb);
-    let mut env = setup_env().await;
-    let server_addr: SocketAddr = "127.0.0.1:5000".parse().unwrap();
-
-    let payload_size = 1024 * 32; // 32KB chunks
-    let total_bytes = total_size_mb * 1024 * 1024;
-    let chunk_count = total_bytes / payload_size;
-
-    let data_chunk = Bytes::from(vec![0u8; payload_size]);
-
-    // Server 端接收并统计
-    let server_task = tokio::spawn(async move {
-        // 接收第一个流
-        if let Some(mut stream) = env.server_stream_rx.recv().await {
-            info!("Received stream from client");
-            stream.ready().await.expect("Server stream ready failed");
-            let mut buf = vec![0u8; 65535];
-            let mut received = 0;
-            while let Ok(n) = stream.read(&mut buf).await {
-                if n == 0 { break; }
-                received += n;
-                trace!("Received {} bytes", received);
-            }
-            return received;
-        }
-        0
-    });
-
-    // Client 端发送
-    let start = Instant::now();
-    let mut client_stream = match env.client_ctrl.connect(server_addr, None, true).await {
-        Ok(s) => s,
-        Err(_) => {
-            // 连接指令已发出，Driver 正在后台进行 QUIC 握手
-            // 稍等片刻让 Transport Parameters 交换完成
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            // 第二次尝试：此时应该已经 Connected 且有了 Stream Credit
-            env.client_ctrl.connect(server_addr, None, true).await.expect("Retry connect failed")
-        }
-    };
-
-    for _ in 0..chunk_count {
-        client_stream.write_all(&data_chunk).await.expect("Write failed");
-        trace!("Sent {} bytes", payload_size);
-    }
-    client_stream.shutdown().await.expect("Shutdown failed"); // 发送 FIN
-
-    let received_bytes = server_task.await.unwrap();
-    let duration = start.elapsed();
-
-    let mb_per_sec = (received_bytes as f64 / 1024.0 / 1024.0) / duration.as_secs_f64();
-    println!("完成。耗时: {:?}, 接收: {} MB", duration, received_bytes / 1024 / 1024);
-    println!("带宽: {:.2} MB/s {:.2} Gbps (注意：这是纯内存拷贝+协议开销)", mb_per_sec, mb_per_sec * 8.0 / 1024.0);
-}
-
-// --- 测试场景 2: 小包每秒处理能力 (PPS / Latency) ---
-async fn bench_pps(iterations: usize) {
-    println!("=== 开始测试: PPS/Ping-Pong ({} 次) ===", iterations);
-    let mut env = setup_env().await;
-    let server_addr: SocketAddr = "127.0.0.1:5000".parse().unwrap();
-
-    // Server 端: Echo Server
-    tokio::spawn(async move {
-        while let Some(mut stream) = env.server_stream_rx.recv().await {
-            tokio::spawn(async move {
-                stream.ready().await.unwrap();
-                let mut buf = [0u8; 1024];
-                loop {
-                    match stream.read(&mut buf).await {
-                        Ok(0) => break, // EOF
-                        Ok(n) => {
-                            // 收到数据立即回写
-                            if let Err(_) = stream.write_all(&buf[..n]).await { break; }
-                        }
-                        Err(_) => break,
-                    }
-                }
-            });
-        }
-    });
-
-    // Client 端: 发送 Ping 等待 Pong
-    let mut client_stream = env.client_ctrl.connect(server_addr, None, true).await.expect("Connect failed");
-    let ping_data = Bytes::from_static(b"ping");
-    let mut buf = [0u8; 1024];
-
-    let start = Instant::now();
-    for _ in 0..iterations {
-        client_stream.write_all(&ping_data).await.unwrap();
-        // 等待回复（同步阻塞式模拟 ping-pong）
-        let _ = client_stream.read(&mut buf).await.unwrap();
-    }
-    let duration = start.elapsed();
-
-    let pps = iterations as f64 / duration.as_secs_f64();
-    let avg_latency = duration.as_secs_f64() * 1000.0 * 1000.0 / iterations as f64; // microseconds
-
-    println!("完成。耗时: {:?}", duration);
-    println!("PPS: {:.0} msgs/s", pps);
-    println!("平均往返延迟 (RTT): {:.2} us", avg_latency);
-}
-
-// --- 测试场景 3: 大量并发连接 (Concurrency) ---
-async fn bench_concurrency(conn_count: usize) {
-    println!("=== 开始测试: 并发连接数 ({} 连接) ===", conn_count);
-    let mut env = setup_env().await;
-    let server_addr: SocketAddr = "127.0.0.1:5000".parse().unwrap();
-
-    // Server 只要不断接受连接即可
-    tokio::spawn(async move {
-        let mut count = 0;
-        while let Some(mut stream) = env.server_stream_rx.recv().await {
-            stream.ready().await.unwrap();
-            count += 1;
-            if count >= conn_count {
-                break; // 只要连接建立成功即可
-            }
-        }
-    });
-
-    let start = Instant::now();
-    let mut set = tokio::task::JoinSet::new();
-
-    // 并发发起连接
-    // 注意：QuicDriver 是单线程处理所有连接的，这里的并发主要测试 channel 和 driver 的处理能力
-    for i in 0..conn_count {
-        let ctrl = env.client_ctrl.clone();
-        // 模拟不同的源端口，否则 quinn 可能会认为是同一个连接迁移
-        // 在我们上面的 virtual_network 里比较简单粗暴，真实情况需要更复杂的模拟
-        // 由于我们的 virtual_network 强制修改了 addr，这里其实是在模拟复用同一个 connection 创建 stream
-        // 如果要测试 *Connection* 数量，我们需要在 Client 端创建多个 Endpoint，或者修改 virtual_network 支持根据 stream ID 路由（这比较复杂）。
-        // 鉴于 quic/driver.rs 的实现，我们这里测试的是 *Stream* 的并发开启能力更为直接。
-
-        set.spawn(async move {
-            let _ = ctrl.connect(server_addr, Some(Bytes::from(format!("init data {}", i))), true).await;
-        });
-    }
-
-    while let Some(_) = set.join_next().await {}
-
-    let duration = start.elapsed();
-    println!("完成。耗时: {:?}", duration);
-    println!("连接/流建立速率: {:.0} /s", conn_count as f64 / duration.as_secs_f64());
-}
-
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() {
+    // console_subscriber::init();
+
     let filter = if cfg!(debug_assertions) {
         // Debug 构建，打印所有 debug / trace
         EnvFilter::new("qs=trace")
@@ -261,16 +39,202 @@ async fn main() {
         .with_env_filter(filter)
         .init();
 
-    // 1. 测带宽 (1GB 数据)
-    bench_throughput(1024).await;
+    trace!("=== 开始 QUIC 库性能基准测试 ===");
+    trace!("测试环境: 内存直连 (In-memory), 排除 OS UDP 栈干扰");
 
-    // 给系统一点喘息时间
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    benchmark_throughput().await;
+    // benchmark_latency_pps().await;
+    // benchmark_concurrent_connections().await; // 根据需要取消注释
+}
 
-    // // 2. 测延迟/小包 (50,000 次 ping-pong)
-    // bench_pps(50_000).await;
-    //
-    // // 3. 测并发 Stream 建立 (10,000 个流)
-    // // 注意：如果测试 Connection，需要修改代码逻辑让 Client 看起来像不同的地址
-    // bench_concurrency(10_000).await;
+/// 测试 1: 最大单流吞吐量 (Bandwidth)
+async fn benchmark_throughput() {
+    trace!("--- 测试 1: 单流吞吐量 (1GB 数据传输) ---");
+
+    let server_addr: SocketAddr = SERVER_ADDR.parse().unwrap();
+    let margins = QuicPacketMargins { header: 0, trailer: 0 };
+
+    // 2. 启动虚拟网络
+
+    // 3. Server 端接受流的处理逻辑
+
+    // 为了测试方便，我们需要把 stream channel 分离出来。
+    // 由于 QuicOutputRx 的字段是公有的，我们可以解构它。
+    let (server, server_out) = QuicEndpoint::new(margins);
+    let (client, client_out) = QuicEndpoint::new(margins);
+
+    let server_packet_rx = server_out.packet;
+    let mut server_new_streams = server_out.stream;
+
+    let client_packet_rx = client_out.packet;
+    let _client_new_streams = client_out.stream; // Client 端不需要 accept 流，它是发起方
+
+    let server = Arc::new(server);
+    let client = Arc::new(client);
+
+    // 启动网络转发（只转发 Packet）
+    let s_arc = server.clone();
+    let c_arc = client.clone();
+
+    // Network: Client -> Server
+    let c2s = tokio::spawn(async move {
+        let mut rx = client_packet_rx;
+        while let Some(pkt) = rx.recv().await {
+            // trace!("Network: Client -> Server packet");
+            s_arc.send(CLIENT_ADDR.parse().unwrap(), pkt.payload).await.unwrap();
+        }
+    });
+
+    // Network: Server -> Client
+    let s2c = tokio::spawn(async move {
+        let mut rx = server_packet_rx;
+        while let Some(pkt) = rx.recv().await {
+            // trace!("Network: Server -> Client packet");
+            c_arc.send(SERVER_ADDR.parse().unwrap(), pkt.payload).await.unwrap();
+        }
+    });
+
+    // 4. Server 端：开启一个任务接收数据并丢弃 (Sink)
+    let server_handle = tokio::spawn(async move {
+        trace!("Server: 等待接收数据...");
+        if let Some(mut stream) = server_new_streams.recv().await {
+            let mut buf = vec![0u8; 64 * 1024]; // 64KB buffer
+            let mut total_bytes = 0;
+            let start = Instant::now();
+            loop {
+                let n = stream.read(&mut buf).await.unwrap();
+                trace!("Server: 接收数据... 已接收 {} bytes", total_bytes + n);
+                if n == 0 { break; }
+                total_bytes += n;
+            }
+            trace!("Server: 数据接收完毕，总计 {} bytes", total_bytes);
+            let duration = start.elapsed();
+            return (total_bytes, duration);
+        }
+        (0, Duration::from_secs(0))
+    });
+
+    // 5. Client 端：发起连接并狂发数据
+    // 等待一下让网络 setup
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let client_stream_task = tokio::spawn(async move {
+        // 等待握手完成并获取流
+        let mut stream = loop {
+            // Scope 1: 临界区，持有锁
+            {
+                trace!("Client: 尝试打开流...");
+                let mut endpoint = client.clone();
+                // 尝试打开流
+                if let Ok(s) = endpoint.open(server_addr, None).await {
+                    break s; // 成功！跳出循环，锁会自动释放
+                }
+                // 如果失败，锁会在这个花括号结束时自动释放
+                // 或者你可以手动调用 drop(endpoint);
+            }
+
+            // Scope 2: 无锁状态
+            // 关键：此时没有持有锁！网络转发任务可以获取锁并填入 Server 的响应包
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+
+        trace!("Client: 流已打开，开始发送数据...");
+        // 拿到流之后继续业务逻辑...
+        let payload_size = 1024 * 1024 * 8192; // 1GB
+        let chunk_size = 64 * 1024;
+        let data = vec![1u8; chunk_size];
+
+        let mut sent = 0;
+        while sent < payload_size {
+            trace!("Client: 发送数据... {}/{}", sent, payload_size);
+            stream.write_all(&data).await.unwrap();
+            sent += chunk_size;
+        }
+        trace!("Client: 数据发送完毕，总计 {} bytes", sent);
+        stream.shutdown().await.unwrap();
+    });
+
+    client_stream_task.await.unwrap();
+    let (bytes, duration) = server_handle.await.unwrap();
+
+    let mb = bytes as f64 / 1024.0 / 1024.0;
+    let secs = duration.as_secs_f64();
+    println!("传输: {:.2} MB, 耗时: {:.4} s", mb, secs);
+    println!("速度: {:.2} MB/s ({:.2} Gbps)", mb / secs, (mb * 8.0) / 1024.0 / secs);
+}
+
+/// 测试 2: 延迟与 PPS (Ping-Pong)
+async fn benchmark_latency_pps() {
+    println!("\n--- 测试 2: 往返延迟 (Latency) & PPS ---");
+    let margins = QuicPacketMargins { header: 0, trailer: 0 };
+    let (server, server_out) = QuicEndpoint::new(margins);
+    let (client, client_out) = QuicEndpoint::new(margins);
+
+    let server_packet_rx = server_out.packet;
+    let mut server_new_streams = server_out.stream;
+    let client_packet_rx = client_out.packet;
+
+    let server = Arc::new(server);
+    let client = Arc::new(client);
+
+    // Wiring
+    let s_arc = server.clone();
+    let c_arc = client.clone();
+    tokio::spawn(async move {
+        let mut rx = client_packet_rx;
+        while let Some(pkt) = rx.recv().await {
+            trace!("Network: Client -> Server packet");
+            s_arc.send(CLIENT_ADDR.parse().unwrap(), pkt.payload).await.unwrap();
+        }
+    });
+    tokio::spawn(async move {
+        let mut rx = server_packet_rx;
+        while let Some(pkt) = rx.recv().await {
+            trace!("Network: Server -> Client packet");
+            c_arc.send(SERVER_ADDR.parse().unwrap(), pkt.payload).await.unwrap();
+        }
+    });
+
+    // Server: Echo Server
+    tokio::spawn(async move {
+        while let Some(mut stream) = server_new_streams.recv().await {
+            tokio::spawn(async move {
+                let mut buf = vec![0u8; 1024];
+                loop {
+                    match stream.read(&mut buf).await {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            if stream.write_all(&buf[..n]).await.is_err() { break; }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // Client: Ping Pong
+    let mut endpoint = client.clone();
+    let mut stream = endpoint.open(SERVER_ADDR.parse().unwrap(), None).await.unwrap();
+    drop(endpoint);
+
+    let payload = vec![0u8; 64]; // 小包 64字节
+    let mut buf = vec![0u8; 1024];
+    let iterations = 100_000;
+
+    let start = Instant::now();
+    for _ in 0..iterations {
+        stream.write_all(&payload).await.unwrap();
+        stream.read_exact(&mut buf[..64]).await.unwrap();
+    }
+    let duration = start.elapsed();
+
+    let avg_latency = duration.as_secs_f64() * 1_000_000.0 / iterations as f64;
+    let pps = iterations as f64 / duration.as_secs_f64();
+
+    println!("Iterations: {}", iterations);
+    println!("平均 RTT 延迟: {:.2} µs", avg_latency);
+    println!("PPS (Transactions/s): {:.2}", pps);
 }

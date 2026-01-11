@@ -1,24 +1,90 @@
 use crate::gateway::quic2::conn::ConnCtrl;
-use crate::gateway::quic2::packet::{QuicPacket, QuicPacketMargins, QuicPacketRx, QuicPacketTx};
-use crate::gateway::quic2::runner::{Runner, RunnerDropRx, RunnerDropTx};
+use crate::gateway::quic2::packet::{
+    PacketPool, QuicPacket, QuicPacketMargins, QuicPacketRx, QuicPacketTx,
+};
+use crate::gateway::quic2::runner::{Runner};
 use crate::gateway::quic2::stream::{QuicStream, QuicStreamRx, QuicStreamTx};
 use crate::gateway::quic2::utils::switched_channel;
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
+use dashmap::DashMap;
+use derive_more::Debug;
+use derive_more::{Constructor, Deref, DerefMut};
+use parking_lot::Mutex;
 use quinn_plaintext::{client_config, server_config};
 use quinn_proto::congestion::BbrConfig;
 use quinn_proto::{
     AcceptError, ClientConfig, Connection, ConnectionHandle, DatagramEvent, Dir, Endpoint,
     EndpointConfig, Incoming, TransportConfig, VarInt,
 };
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::io::{Error, ErrorKind};
+use std::io::{Error, ErrorKind, Result};
+use std::mem::take;
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc;
+use tokio::select;
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
-use tracing::trace;
+use tracing::{error, trace};
+
+type RunnerTx = mpsc::UnboundedSender<RunnerGuard>;
+type RunnerRx = mpsc::UnboundedReceiver<RunnerGuard>;
+
+#[derive(Debug, Constructor)]
+struct RunnerGuard {
+    hdl: ConnectionHandle,
+    #[debug(skip)]
+    ctrls: Arc<DashMap<ConnectionHandle, ConnCtrl>>,
+    addr: SocketAddr,
+    #[debug(skip)]
+    conns: Arc<DashMap<SocketAddr, ConnectionHandle>>,
+    runner: Runner,
+}
+
+impl Drop for RunnerGuard {
+    fn drop(&mut self) {
+        self.ctrls.remove(&self.hdl);
+        self.conns.remove(&self.addr);
+    }
+}
+
+#[derive(Debug)]
+struct Driver {
+    tasks: JoinSet<()>,
+    ctrls: Arc<DashMap<ConnectionHandle, ConnCtrl>>,
+    conns: Arc<DashMap<SocketAddr, ConnectionHandle>>,
+    rx: RunnerRx,
+}
+
+impl Driver {
+    fn new(
+        ctrls: Arc<DashMap<ConnectionHandle, ConnCtrl>>,
+        conns: Arc<DashMap<SocketAddr, ConnectionHandle>>,
+    ) -> (RunnerTx, Self) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        (
+            tx,
+            Self {
+                tasks: JoinSet::new(),
+                ctrls,
+                conns,
+                rx,
+            },
+        )
+    }
+    async fn run(&mut self) {
+        while let Some(mut guard) = self.rx.recv().await {
+            self.tasks.spawn(async move {
+                match guard.runner.run().await {
+                    Ok(()) => trace!("Runner({:?}) exited normally", guard),
+                    Err(e) => error!("Runner({:?}) exited with error: {:?}", guard, e),
+                }
+            });
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct QuicOutputRx {
@@ -32,16 +98,36 @@ pub(crate) struct QuicOutputTx {
     pub(crate) stream: QuicStreamTx,
 }
 
+thread_local! {
+    pub(super) static BUFFER: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(65535));
+    pub(super) static PACKET_POOL: RefCell<PacketPool> = RefCell::new(PacketPool::new());
+}
+
+#[derive(Deref, DerefMut)]
+struct BufferGuard(Vec<u8>);
+
+impl BufferGuard {
+    fn new() -> Self {
+        let mut buf = BUFFER.take();
+        buf.clear();
+        Self(buf)
+    }
+}
+
+impl Drop for BufferGuard {
+    fn drop(&mut self) {
+        BUFFER.set(take(&mut self.0));
+    }
+}
+
 #[derive(Debug)]
 pub struct QuicEndpoint {
-    endpoint: Endpoint,
+    endpoint: Mutex<Endpoint>,
     client_config: ClientConfig,
-    ctrls: HashMap<ConnectionHandle, ConnCtrl>,
-    conns: HashMap<SocketAddr, ConnectionHandle>,
-    tasks: JoinSet<std::io::Result<()>>,
-    drop_tx: RunnerDropTx,
-    drop_rx: RunnerDropRx,
-    tx: QuicOutputTx,
+    driver: RunnerTx,
+    ctrls: Arc<DashMap<ConnectionHandle, ConnCtrl>>,
+    conns: Arc<DashMap<SocketAddr, ConnectionHandle>>,
+    output: QuicOutputTx,
     buf: Vec<u8>,
 }
 
@@ -88,56 +174,79 @@ impl QuicEndpoint {
     ) -> (Self, QuicOutputRx) {
         let (packet_tx, packet_rx) = mpsc::channel(1024);
         let (stream_tx, stream_rx) = switched_channel(512);
-        let tx = QuicOutputTx {
+        let output_tx = QuicOutputTx {
             packet: QuicPacketTx::new(packet_tx, packet_margins),
             stream: stream_tx,
         };
-        let rx = QuicOutputRx {
+        let output_rx = QuicOutputRx {
             packet: packet_rx,
             stream: stream_rx,
         };
-        let (drop_tx, drop_rx) = mpsc::channel(128);
+
+        let ctrls = Arc::new(DashMap::new());
+        let conns = Arc::new(DashMap::new());
+
+        let (runner_tx, mut driver) = Driver::new(ctrls.clone(), conns.clone());
+        tokio::spawn(async move { driver.run().await });
 
         (
             Self {
-                endpoint,
+                endpoint: endpoint.into(),
                 client_config,
-                ctrls: HashMap::new(),
-                conns: HashMap::new(),
-                tasks: JoinSet::new(),
-                drop_tx,
-                drop_rx,
-                tx,
+                driver: runner_tx,
+                ctrls,
+                conns,
+                output: output_tx,
                 buf: Vec::new(),
             },
-            rx,
+            output_rx,
         )
     }
 
-    fn establish(&mut self, hdl: ConnectionHandle, conn: Connection) -> ConnCtrl {
+    fn establish(&self, hdl: ConnectionHandle, conn: Connection) -> Result<ConnCtrl> {
         let addr = conn.remote_address();
-        let (ctrl, runner) = Runner::new(hdl, conn, self.tx.clone(), self.drop_tx.clone());
+        let (ctrl, runner) = Runner::new(conn, self.output.clone());
+        self.driver
+            .send(RunnerGuard::new(
+                hdl,
+                self.ctrls.clone(),
+                addr,
+                self.conns.clone(),
+                runner,
+            ))
+            .map_err(|e| {
+                Error::new(
+                    ErrorKind::Other,
+                    format!("Failed to send runner to driver: {:?}", e),
+                )
+            })?;
         self.ctrls.insert(hdl, ctrl.clone());
         self.conns.insert(addr, hdl);
-        self.tasks.spawn(runner.run());
-        ctrl
+        Ok(ctrl)
     }
 
-    fn accept(&mut self, incoming: Incoming) -> std::io::Result<()> {
+    fn accept(&self, incoming: Incoming) -> Result<()> {
         let addr = incoming.remote_address();
         trace!("Incoming connection from {:?}", addr);
-        match self
+        let mut buf = BufferGuard::new();
+        let accept = self
             .endpoint
-            .accept(incoming, Instant::now(), &mut self.buf, None)
+            .lock()
+            .accept(incoming, Instant::now(), &mut buf, None);
+        match accept
         {
             Ok((hdl, conn)) => {
                 trace!("Accepted new connection({:?}) from {:?}", hdl, addr);
-                self.establish(hdl, conn);
+                self.establish(hdl, conn)?;
                 Ok(())
             }
             Err(AcceptError { cause, response }) => {
                 if let Some(transmit) = response {
-                    let _ = self.tx.packet.try_send_transmit(transmit, &self.buf);
+                    let packet = PACKET_POOL.with(|pool| {
+                        pool.borrow_mut()
+                            .pack_transmit(transmit, &*buf, self.output.packet.margins)
+                    });
+                    let _ = self.output.packet.try_send(packet);
                 }
                 Err(Error::new(
                     ErrorKind::Other,
@@ -147,15 +256,18 @@ impl QuicEndpoint {
         }
     }
 
-    fn connect(&mut self, addr: SocketAddr, server_name: &str) -> Result<ConnCtrl, Error> {
-        if let Some(&hdl) = self.conns.get(&addr) {
-            if let Some(conn) = self.ctrls.get(&hdl).cloned() {
-                return Ok(conn);
+    fn connect(&self, addr: SocketAddr, server_name: &str) -> Result<ConnCtrl> {
+        if let Some(entry) = self.conns.get(&addr) {
+            let hdl = *entry;
+            drop(entry);
+            if let Some(conn) = self.ctrls.get(&hdl) {
+                return Ok(conn.clone());
             }
         }
 
         let (hdl, conn) = self
             .endpoint
+            .lock()
             .connect(
                 Instant::now(),
                 self.client_config.clone(),
@@ -169,35 +281,29 @@ impl QuicEndpoint {
                 )
             })?;
 
-        Ok(self.establish(hdl, conn))
+        self.establish(hdl, conn)
     }
 
-    pub fn open(
-        &mut self,
-        addr: SocketAddr,
-        header: Option<BytesMut>,
-    ) -> std::io::Result<QuicStream> {
+    pub async fn open(&self, addr: SocketAddr, header: Option<BytesMut>) -> Result<QuicStream> {
         let ctrl = self.connect(addr, "")?;
         let stream = ctrl.open(Dir::Bi)?;
-        header
-            .map(|h| self.send(addr, h))
-            .transpose()
-            .map_err(|e| {
-                ctrl.close(stream.id);
-                e
-            })?;
+        if let Some(header) = header {
+            self.send(addr, header).await?;
+        }
         Ok(stream)
     }
 
-    pub fn send(&mut self, addr: SocketAddr, payload: BytesMut) -> std::io::Result<()> {
+    pub async fn send(&self, addr: SocketAddr, payload: BytesMut) -> Result<()> {
         let now = Instant::now();
-        self.buf.clear();
-        match self
+        let mut buf = BufferGuard::new();
+        let event = self
             .endpoint
-            .handle(now, addr, None, None, payload, &mut self.buf)
+            .lock()
+            .handle(now, addr, None, None, payload, &mut buf);
+        match event
         {
             Some(DatagramEvent::NewConnection(incoming)) => {
-                if !self.tx.stream.switch().load(Ordering::Relaxed) {
+                if !self.output.stream.switch().load(Ordering::Relaxed) {
                     trace!("Incoming stream channel is closed. Connection dropped.");
                     return Ok(());
                 }
@@ -210,7 +316,7 @@ impl QuicEndpoint {
             }
 
             Some(DatagramEvent::ConnectionEvent(hdl, evt)) => {
-                if let Some(ctrl) = self.ctrls.get_mut(&hdl).cloned() {
+                if let Some(ctrl) = self.ctrls.get(&hdl).map(|ctrl| ctrl.clone()) {
                     ctrl.send(evt);
                     Ok(())
                 } else {
@@ -221,16 +327,18 @@ impl QuicEndpoint {
                 }
             }
 
-            Some(DatagramEvent::Response(transmit)) => self
-                .tx
-                .packet
-                .try_send_transmit(transmit, &self.buf)
-                .map_err(|e| {
+            Some(DatagramEvent::Response(transmit)) => {
+                let packet = PACKET_POOL.with(|pool| {
+                    pool.borrow_mut()
+                        .pack_transmit(transmit, &*buf, self.output.packet.margins)
+                });
+                self.output.packet.send(packet).await.map_err(|e| {
                     Error::new(
                         ErrorKind::Other,
                         format!("Failed to send QUIC response: {:?}", e),
                     )
-                }),
+                })
+            }
 
             None => Ok(()),
         }

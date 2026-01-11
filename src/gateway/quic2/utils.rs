@@ -56,12 +56,12 @@ pub struct QuicBufferMargins {
 }
 
 #[derive(Debug)]
-pub(crate) struct QuicBufferPool {
+pub(crate) struct BufferPool {
     pool: BytesMut,
     pub(crate) min_capacity: usize,
 }
 
-impl QuicBufferPool {
+impl BufferPool {
     #[inline]
     pub(crate) fn new(min_capacity: usize) -> Self {
         Self {
