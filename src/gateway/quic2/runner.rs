@@ -3,16 +3,17 @@ use crate::gateway::quic2::endpoint::{QuicOutputTx, PACKET_POOL};
 use crate::gateway::quic2::stream::{QuicStream, StreamDropRx};
 use bytes::{Bytes, BytesMut};
 use derive_more::{Deref, DerefMut};
-use quinn_proto::{Connection, ConnectionHandle, Event, StreamEvent};
+use quinn_proto::{Connection, ConnectionHandle, Event, StreamEvent, Transmit};
 use std::collections::VecDeque;
 use std::io::{Error, ErrorKind};
-use std::mem::swap;
+use std::mem::{forget, swap};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 use tokio::select;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::time::sleep;
+use tracing::trace;
 use crate::gateway::quic2::QuicPacket;
 
 #[derive(Debug, Deref, DerefMut)]
@@ -121,34 +122,53 @@ impl Runner {
                     }
                 }
 
+
+                let mut count = 0;
                 // 生成待发送数据包
-                let mut chunk = Vec::with_capacity(16 * 65536);
+                let mut chunk = Vec::with_capacity(16 * 1200);
                 let mut transmits = VecDeque::new();
                 loop {
+                    // trace!("QUIC transmit chunk len: {}", chunk.len());
                     if chunk.len() + header + state.conn.current_mtu() as usize + trailer
                         > chunk.capacity()
                     {
+                        count += 1;
+                        trace!(
+                            "QUIC transmit chunk full, allocating new chunk (currently {:?} chunks)",
+                            count
+                        );
                         pending_chunks.push_back(BytesMut::from(Bytes::from(chunk)));
-                        chunk = Vec::with_capacity(16 * 65536);
+                        chunk = Vec::with_capacity(16 * 1200);
                         pending_transmits.push_back(transmits);
                         transmits = VecDeque::new();
                     }
-                    unsafe {
-                        chunk.set_len(chunk.len() + header);
-                    }
-                    let Some(transmit) = state.conn.poll_transmit(Instant::now(), 1, &mut chunk)
-                    else {
-                        unsafe {
-                            chunk.set_len(chunk.len() - header);
-                        }
-                        pending_chunks.push_back(BytesMut::from(Bytes::from(chunk)));
-                        pending_transmits.push_back(transmits);
-                        break;
+                    // 2. [关键修改] 构造指向 chunk 尾部的“伪 Vec”
+                    // 计算 Payload 应该写入的起始位置（跳过当前数据 + 预留 Header）
+                    let payload_offset = chunk.len() + header;
+                    let mut buf = unsafe {
+                        let ptr = chunk.as_mut_ptr().add(payload_offset);
+                        Vec::from_raw_parts(ptr, 0, chunk.capacity() - payload_offset)
                     };
-                    unsafe {
-                        chunk.set_len(chunk.len() + trailer);
+                    let transmit = state.conn.poll_transmit(Instant::now(), 1, &mut buf);
+                    let written = buf.len();
+                    forget(buf);
+                    match transmit {
+                        None => {
+                            if !chunk.is_empty() {
+                                pending_chunks.push_back(BytesMut::from(Bytes::from(chunk)));
+                            }
+                            if !transmits.is_empty() {
+                                pending_transmits.push_back(transmits);
+                            }
+                            break;
+                        }
+                        Some(transmit) => {
+                            unsafe {
+                                chunk.set_len(payload_offset + written + trailer);
+                            }
+                            transmits.push_back(transmit);
+                        }
                     }
-                    transmits.push_back(transmit);
                 }
 
                 timeout = state.conn.poll_timeout();

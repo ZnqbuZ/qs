@@ -28,22 +28,9 @@
     </cargoProject>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="ec1f0d40-3ac5-4f78-ac6d-97b72ebc55d6" name="更改" comment="">
-      <change afterPath="$PROJECT_DIR$/src/main0.rs" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/main1.rs" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/main2.rs" afterDir="false" />
+    <list default="true" id="ec1f0d40-3ac5-4f78-ac6d-97b72ebc55d6" name="更改" comment="Refactor QUIC module structure and improve performance benchmarks">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Cargo.lock" beforeDir="false" afterPath="$PROJECT_DIR$/Cargo.lock" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/Cargo.toml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/profile.json.gz" beforeDir="false" afterPath="$PROJECT_DIR$/profile.json.gz" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/gateway/mod.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/gateway/mod.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/gateway/quic2/endpoint.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/gateway/quic2/endpoint.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/gateway/quic2/packet.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/gateway/quic2/packet.rs" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/gateway/quic2/runner.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/gateway/quic2/runner.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/gateway/quic2/stream.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/gateway/quic2/stream.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/gateway/quic2/utils.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/gateway/quic2/utils.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/main.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/main.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/main3.rs" beforeDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -214,12 +201,36 @@
       <workItem from="1767910797853" duration="63000" />
       <workItem from="1767910931766" duration="651000" />
       <workItem from="1767947959986" duration="16408000" />
-      <workItem from="1768136606815" duration="15194000" />
+      <workItem from="1768136606815" duration="16388000" />
     </task>
+    <task id="LOCAL-00001" summary="Refactor QUIC module structure and improve performance benchmarks">
+      <option name="closed" value="true" />
+      <created>1768153598925</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1768153598925</updated>
+    </task>
+    <option name="localTasksCounter" value="2" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
     <option name="version" value="3" />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="Refactor QUIC module structure and improve performance benchmarks" />
+    <option name="LAST_COMMIT_MESSAGE" value="Refactor QUIC module structure and improve performance benchmarks" />
   </component>
   <component name="XSLT-Support.FileAssociations.UIState">
     <expand />

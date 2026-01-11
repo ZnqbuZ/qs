@@ -140,7 +140,7 @@ async fn benchmark_throughput() {
 
         trace!("Client: 流已打开，开始发送数据...");
         // 拿到流之后继续业务逻辑...
-        let payload_size = 1024 * 1024 * 8192; // 1GB
+        let payload_size = 1024 * 1024 * 512; // 1GB
         let chunk_size = 64 * 1024;
         let data = vec![1u8; chunk_size];
 
