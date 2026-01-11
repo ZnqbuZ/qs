@@ -6,7 +6,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::mpsc;
 use tracing::trace;
 use crate::gateway::quic2::conn::{ConnCtrl, ConnState};
-use crate::gateway::quic2::utils::{BufferPool, SwitchedReceiver, SwitchedSender};
+use crate::gateway::quic2::utils::{BufPool, SwitchedReceiver, SwitchedSender};
 
 pub(crate) type QuicStreamTx = SwitchedSender<QuicStream>;
 pub type QuicStreamRx = SwitchedReceiver<QuicStream>;
@@ -18,7 +18,7 @@ pub(crate) type StreamDropRx = mpsc::Receiver<StreamId>;
 pub struct QuicStream {
     pub(crate) id: StreamId,
     ctrl: ConnCtrl,
-    pool: BufferPool,
+    pool: BufPool,
 }
 
 impl QuicStream {
@@ -26,7 +26,7 @@ impl QuicStream {
         Self {
             id,
             ctrl,
-            pool: BufferPool::new(2048),
+            pool: BufPool::new(2048),
         }
     }
 }

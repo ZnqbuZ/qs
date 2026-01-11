@@ -4,7 +4,7 @@ use derive_more::{Constructor, Deref, DerefMut, From, Into};
 use quinn_proto::Transmit;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::{SendError, TrySendError};
-use crate::gateway::quic2::utils::{QuicBufferMargins, BufferPool};
+use crate::gateway::quic2::utils::{BufMargins, BufPool};
 
 const PACKET_POOL_MIN_CAPACITY: usize = 65536;
 
@@ -14,14 +14,14 @@ pub struct QuicPacket {
     pub payload: BytesMut,
 }
 
-pub type QuicPacketMargins = QuicBufferMargins;
+pub type QuicPacketMargins = BufMargins;
 
 #[derive(Debug)]
-pub(super) struct PacketPool(BufferPool);
+pub(super) struct PacketPool(BufPool);
 
 impl PacketPool {
     pub(super) fn new() -> Self {
-        Self(BufferPool::new(PACKET_POOL_MIN_CAPACITY))
+        Self(BufPool::new(PACKET_POOL_MIN_CAPACITY))
     }
 
     pub(super) fn pack(&mut self, addr: SocketAddr, data: &[u8], margins: QuicPacketMargins) -> QuicPacket {

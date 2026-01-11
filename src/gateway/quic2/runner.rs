@@ -1,6 +1,8 @@
 use crate::gateway::quic2::conn::ConnCtrl;
-use crate::gateway::quic2::endpoint::{QuicOutputTx, PACKET_POOL};
+use crate::gateway::quic2::endpoint::QuicOutputTx;
 use crate::gateway::quic2::stream::{QuicStream, StreamDropRx};
+use crate::gateway::quic2::utils::BufAcc;
+use crate::gateway::quic2::QuicPacket;
 use bytes::{Bytes, BytesMut};
 use derive_more::{Deref, DerefMut};
 use quinn_proto::{Connection, ConnectionHandle, Event, StreamEvent, Transmit};
@@ -14,7 +16,6 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::time::sleep;
 use tracing::trace;
-use crate::gateway::quic2::QuicPacket;
 
 #[derive(Debug, Deref, DerefMut)]
 pub(crate) struct Runner {
@@ -46,11 +47,8 @@ impl Runner {
         let mut pending_streams = VecDeque::new();
         let mut pending_wakers = Vec::new();
         let mut inbox = Vec::new();
-        let mut recv = Vec::new();
-        let mut send = BytesMut::new();
         let mut pending_transmits = VecDeque::new();
         let mut pending_chunks = VecDeque::new();
-        let (header, trailer) = self.output.packet.margins.into();
 
         let mut timer = Box::pin(sleep(Duration::MAX));
         let mut timeout;
@@ -122,40 +120,38 @@ impl Runner {
                     }
                 }
 
-
                 let mut count = 0;
                 // 生成待发送数据包
-                let mut chunk = Vec::with_capacity(16 * 1200);
+                let mut chunk = BufAcc::new(256 * 1200);
                 let mut transmits = VecDeque::new();
                 loop {
-                    // trace!("QUIC transmit chunk len: {}", chunk.len());
-                    if chunk.len() + header + state.conn.current_mtu() as usize + trailer
-                        > chunk.capacity()
-                    {
-                        count += 1;
-                        trace!(
-                            "QUIC transmit chunk full, allocating new chunk (currently {:?} chunks)",
-                            count
-                        );
-                        pending_chunks.push_back(BytesMut::from(Bytes::from(chunk)));
-                        chunk = Vec::with_capacity(16 * 1200);
-                        pending_transmits.push_back(transmits);
-                        transmits = VecDeque::new();
-                    }
-                    // 2. [关键修改] 构造指向 chunk 尾部的“伪 Vec”
-                    // 计算 Payload 应该写入的起始位置（跳过当前数据 + 预留 Header）
-                    let payload_offset = chunk.len() + header;
-                    let mut buf = unsafe {
-                        let ptr = chunk.as_mut_ptr().add(payload_offset);
-                        Vec::from_raw_parts(ptr, 0, chunk.capacity() - payload_offset)
+                    let mut buf = match chunk.buf(
+                        state.conn.current_mtu() as usize,
+                        self.output.packet.margins,
+                    ) {
+                        Some(buf) => buf,
+                        None => {
+                            count += 1;
+                            trace!(
+                                "QUIC transmit chunk full, allocating new chunk (currently {:?} chunks)",
+                                count
+                            );
+                            pending_chunks.push_back(chunk.renew());
+                            pending_transmits.push_back(transmits);
+                            transmits = VecDeque::new();
+                            chunk
+                                .buf(
+                                    state.conn.current_mtu() as usize,
+                                    self.output.packet.margins,
+                                )
+                                .unwrap()
+                        }
                     };
                     let transmit = state.conn.poll_transmit(Instant::now(), 1, &mut buf);
-                    let written = buf.len();
-                    forget(buf);
                     match transmit {
                         None => {
                             if !chunk.is_empty() {
-                                pending_chunks.push_back(BytesMut::from(Bytes::from(chunk)));
+                                pending_chunks.push_back(chunk.take());
                             }
                             if !transmits.is_empty() {
                                 pending_transmits.push_back(transmits);
@@ -163,9 +159,7 @@ impl Runner {
                             break;
                         }
                         Some(transmit) => {
-                            unsafe {
-                                chunk.set_len(payload_offset + written + trailer);
-                            }
+                            buf.commit();
                             transmits.push_back(transmit);
                         }
                     }
@@ -180,7 +174,7 @@ impl Runner {
             }
 
             // 4. --- 发送阶段：带“接收抢占”的发送 ---
-            send.extend_from_slice(&recv);
+            let (header, trailer) = self.output.packet.margins.into();
             while !pending_transmits.is_empty() || !pending_streams.is_empty() {
                 select! {
                     // 监听接收事件：如果有新包入队，立即停止发送，回去处理接收
