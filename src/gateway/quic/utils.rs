@@ -1,4 +1,4 @@
-use bytes::{Buf, BytesMut};
+use bytes::BytesMut;
 use derive_more::{Deref, DerefMut, From, Into};
 use std::cmp::max;
 use std::mem::ManuallyDrop;

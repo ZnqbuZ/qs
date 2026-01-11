@@ -1,20 +1,20 @@
+use crate::gateway::quic::stream::QuicStream;
+use derive_more::{Deref, DerefMut};
+use parking_lot::Mutex;
 use quinn_proto::{Connection, ConnectionEvent, Dir, StreamId, VarInt};
 use std::collections::HashMap;
-use std::io::{Result, Error, ErrorKind};
+use std::io::{Error, Result};
 use std::iter::chain;
 use std::sync::Arc;
 use std::task::Waker;
 use std::time::Instant;
-use derive_more::{Deref, DerefMut};
-use parking_lot::Mutex;
 use tokio::sync::Notify;
-use crate::gateway::quic::stream::{QuicStream, StreamDropTx};
 
 #[derive(Debug)]
-pub(crate) struct ConnState {
-    pub(crate) conn: Connection,
-    pub(crate) readers: HashMap<StreamId, Waker>,
-    pub(crate) writers: HashMap<StreamId, Waker>,
+pub(super) struct ConnState {
+    pub(super) conn: Connection,
+    pub(super) readers: HashMap<StreamId, Waker>,
+    pub(super) writers: HashMap<StreamId, Waker>,
 }
 
 impl ConnState {
@@ -26,27 +26,21 @@ impl ConnState {
         }
     }
 
-    pub(crate) fn open(&mut self, dir: Dir) -> Result<StreamId> {
-        self.conn.streams().open(dir).ok_or(Error::new(
-            ErrorKind::Other,
-            format!(
-                "Failed to open new QUIC stream in direction {:?}: exhausted",
-                dir
-            ),
-        ))
+    pub(super) fn open(&mut self, dir: Dir) -> Result<StreamId> {
+        self.conn.streams().open(dir).ok_or(Error::other(format!(
+            "Failed to open new QUIC stream in direction {:?}: exhausted",
+            dir
+        )))
     }
 
-    pub(crate) fn accept(&mut self, dir: Dir) -> Result<StreamId> {
-        self.conn.streams().accept(dir).ok_or(Error::new(
-            ErrorKind::Other,
-            format!(
-                "Failed to accept new QUIC stream in direction {:?}: no incoming",
-                dir
-            ),
-        ))
+    pub(super) fn accept(&mut self, dir: Dir) -> Result<StreamId> {
+        self.conn.streams().accept(dir).ok_or(Error::other(format!(
+            "Failed to accept new QUIC stream in direction {:?}: no incoming",
+            dir
+        )))
     }
 
-    pub(crate) fn close(&mut self, id: StreamId) {
+    pub(super) fn close(&mut self, id: StreamId) {
         let _ = self.conn.recv_stream(id).stop(VarInt::from_u32(0));
         if let Some(waker) = self.readers.remove(&id) {
             waker.wake();
@@ -99,24 +93,22 @@ impl From<Vec<ConnectionEvent>> for SharedConnInbox {
 const QUIC_CONN_INBOX_CAPACITY: usize = 1024;
 
 #[derive(Debug, Clone)]
-pub(crate) struct ConnCtrl {
-    pub(crate) state: SharedConnState,
-    pub(crate) inbox: SharedConnInbox,
-    pub(crate) notify: Arc<Notify>,
-    drop_tx: StreamDropTx,
+pub(super) struct ConnCtrl {
+    pub(super) state: SharedConnState,
+    pub(super) inbox: SharedConnInbox,
+    pub(super) notify: Arc<Notify>,
 }
 
 impl ConnCtrl {
-    pub(crate) fn new(conn: Connection, drop_tx: StreamDropTx) -> Self {
+    pub(super) fn new(conn: Connection) -> Self {
         Self {
             state: ConnState::new(conn).into(),
             inbox: SharedConnInbox::from(Vec::with_capacity(QUIC_CONN_INBOX_CAPACITY)),
             notify: Arc::new(Notify::new()),
-            drop_tx,
         }
     }
 
-    pub(crate) fn send(&self, evt: ConnectionEvent) {
+    pub(super) fn send(&self, evt: ConnectionEvent) {
         if let Some(mut inner) = self.state.try_lock() {
             inner.conn.handle_event(evt);
         } else {
@@ -129,19 +121,9 @@ impl ConnCtrl {
         self.notify.notify_one();
     }
 
-    pub(crate) fn open(&self, dir: Dir) -> Result<QuicStream> {
+    pub(super) fn open(&self, dir: Dir) -> Result<QuicStream> {
         let id = self.state.lock().open(dir)?;
         self.notify.notify_one();
         Ok(QuicStream::new(id, self.clone()))
-    }
-
-    pub(crate) fn close(&self, id: StreamId) {
-        match self.state.try_lock() {
-            Some(mut state) => state.close(id),
-            None => {
-                let _ = self.drop_tx.try_send(id);
-            }
-        }
-        self.notify.notify_one();
     }
 }

@@ -127,12 +127,12 @@ impl AsyncWrite for QuicStream {
         }
     }
 
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         self.ctrl.notify.notify_one();
         Poll::Ready(Ok(()))
     }
 
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         let finish = self.ctrl.state.lock().conn.send_stream(self.id).finish();
         match finish {
             Ok(()) => {
@@ -147,9 +147,3 @@ impl AsyncWrite for QuicStream {
         }
     }
 }
-
-// impl Drop for QuicStream {
-//     fn drop(&mut self) {
-//         self.ctrl.close(self.id);
-//     }
-// }

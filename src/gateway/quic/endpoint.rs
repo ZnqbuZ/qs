@@ -1,8 +1,6 @@
 use crate::gateway::quic::conn::ConnCtrl;
-use crate::gateway::quic::packet::{
-    PacketPool, QuicPacket, QuicPacketMargins, QuicPacketRx, QuicPacketTx,
-};
-use crate::gateway::quic::runner::{Runner};
+use crate::gateway::quic::packet::{PacketPool, QuicPacketMargins, QuicPacketRx, QuicPacketTx};
+use crate::gateway::quic::runner::Runner;
 use crate::gateway::quic::stream::{QuicStream, QuicStreamRx, QuicStreamTx};
 use crate::gateway::quic::utils::switched_channel;
 use bytes::BytesMut;
@@ -17,15 +15,13 @@ use quinn_proto::{
     EndpointConfig, Incoming, TransportConfig, VarInt,
 };
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::io::{Error, ErrorKind, Result};
 use std::mem::take;
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::select;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tracing::{error, trace};
 
@@ -53,23 +49,16 @@ impl Drop for RunnerGuard {
 #[derive(Debug)]
 struct Driver {
     tasks: JoinSet<()>,
-    ctrls: Arc<DashMap<ConnectionHandle, ConnCtrl>>,
-    conns: Arc<DashMap<SocketAddr, ConnectionHandle>>,
     rx: RunnerRx,
 }
 
 impl Driver {
-    fn new(
-        ctrls: Arc<DashMap<ConnectionHandle, ConnCtrl>>,
-        conns: Arc<DashMap<SocketAddr, ConnectionHandle>>,
-    ) -> (RunnerTx, Self) {
+    fn new() -> (RunnerTx, Self) {
         let (tx, rx) = mpsc::unbounded_channel();
         (
             tx,
             Self {
                 tasks: JoinSet::new(),
-                ctrls,
-                conns,
                 rx,
             },
         )
@@ -93,9 +82,9 @@ pub struct QuicOutputRx {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct QuicOutputTx {
-    pub(crate) packet: QuicPacketTx,
-    pub(crate) stream: QuicStreamTx,
+pub(super) struct QuicOutputTx {
+    pub(super) packet: QuicPacketTx,
+    pub(super) stream: QuicStreamTx,
 }
 
 thread_local! {
@@ -128,7 +117,6 @@ pub struct QuicEndpoint {
     ctrls: Arc<DashMap<ConnectionHandle, ConnCtrl>>,
     conns: Arc<DashMap<SocketAddr, ConnectionHandle>>,
     output: QuicOutputTx,
-    buf: Vec<u8>,
 }
 
 impl QuicEndpoint {
@@ -183,10 +171,7 @@ impl QuicEndpoint {
             stream: stream_rx,
         };
 
-        let ctrls = Arc::new(DashMap::new());
-        let conns = Arc::new(DashMap::new());
-
-        let (runner_tx, mut driver) = Driver::new(ctrls.clone(), conns.clone());
+        let (runner_tx, mut driver) = Driver::new();
         tokio::spawn(async move { driver.run().await });
 
         (
@@ -194,10 +179,9 @@ impl QuicEndpoint {
                 endpoint: endpoint.into(),
                 client_config,
                 driver: runner_tx,
-                ctrls,
-                conns,
+                ctrls: DashMap::new().into(),
+                conns: DashMap::new().into(),
                 output: output_tx,
-                buf: Vec::new(),
             },
             output_rx,
         )
@@ -214,12 +198,7 @@ impl QuicEndpoint {
                 self.conns.clone(),
                 runner,
             ))
-            .map_err(|e| {
-                Error::new(
-                    ErrorKind::Other,
-                    format!("Failed to send runner to driver: {:?}", e),
-                )
-            })?;
+            .map_err(|e| Error::other(format!("Failed to send runner to driver: {:?}", e)))?;
         self.ctrls.insert(hdl, ctrl.clone());
         self.conns.insert(addr, hdl);
         Ok(ctrl)
@@ -233,8 +212,7 @@ impl QuicEndpoint {
             .endpoint
             .lock()
             .accept(incoming, Instant::now(), &mut buf, None);
-        match accept
-        {
+        match accept {
             Ok((hdl, conn)) => {
                 trace!("Accepted new connection({:?}) from {:?}", hdl, addr);
                 self.establish(hdl, conn)?;
@@ -244,14 +222,14 @@ impl QuicEndpoint {
                 if let Some(transmit) = response {
                     let packet = PACKET_POOL.with(|pool| {
                         pool.borrow_mut()
-                            .pack_transmit(transmit, &*buf, self.output.packet.margins)
+                            .pack_transmit(transmit, &buf, self.output.packet.margins)
                     });
                     let _ = self.output.packet.try_send(packet);
                 }
-                Err(Error::new(
-                    ErrorKind::Other,
-                    format!("Failed to accept incoming connection: {:?}", cause),
-                ))
+                Err(Error::other(format!(
+                    "Failed to accept incoming connection: {:?}",
+                    cause
+                )))
             }
         }
     }
@@ -274,12 +252,7 @@ impl QuicEndpoint {
                 addr,
                 server_name,
             )
-            .map_err(|e| {
-                Error::new(
-                    ErrorKind::Other,
-                    format!("Failed to connect to {:?}: {:?}", addr, e),
-                )
-            })?;
+            .map_err(|e| Error::other(format!("Failed to connect to {:?}: {:?}", addr, e)))?;
 
         self.establish(hdl, conn)
     }
@@ -300,19 +273,14 @@ impl QuicEndpoint {
             .endpoint
             .lock()
             .handle(now, addr, None, None, payload, &mut buf);
-        match event
-        {
+        match event {
             Some(DatagramEvent::NewConnection(incoming)) => {
                 if !self.output.stream.switch().load(Ordering::Relaxed) {
                     trace!("Incoming stream channel is closed. Connection dropped.");
                     return Ok(());
                 }
-                self.accept(incoming).map_err(|e| {
-                    Error::new(
-                        ErrorKind::Other,
-                        format!("Failed to accept connection: {:?}", e),
-                    )
-                })
+                self.accept(incoming)
+                    .map_err(|e| Error::other(format!("Failed to accept connection: {:?}", e)))
             }
 
             Some(DatagramEvent::ConnectionEvent(hdl, evt)) => {
@@ -330,14 +298,13 @@ impl QuicEndpoint {
             Some(DatagramEvent::Response(transmit)) => {
                 let packet = PACKET_POOL.with(|pool| {
                     pool.borrow_mut()
-                        .pack_transmit(transmit, &*buf, self.output.packet.margins)
+                        .pack_transmit(transmit, &buf, self.output.packet.margins)
                 });
-                self.output.packet.send(packet).await.map_err(|e| {
-                    Error::new(
-                        ErrorKind::Other,
-                        format!("Failed to send QUIC response: {:?}", e),
-                    )
-                })
+                self.output
+                    .packet
+                    .send(packet)
+                    .await
+                    .map_err(|e| Error::other(format!("Failed to send QUIC response: {:?}", e)))
             }
 
             None => Ok(()),

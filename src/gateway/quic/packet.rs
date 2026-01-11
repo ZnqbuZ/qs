@@ -1,9 +1,8 @@
 use std::net::SocketAddr;
 use bytes::BytesMut;
-use derive_more::{Constructor, Deref, DerefMut, From, Into};
+use derive_more::{Constructor, Deref, DerefMut};
 use quinn_proto::Transmit;
 use tokio::sync::mpsc;
-use tokio::sync::mpsc::error::{SendError, TrySendError};
 use crate::gateway::quic::utils::{BufMargins, BufPool};
 
 const PACKET_POOL_MIN_CAPACITY: usize = 65536;
@@ -31,7 +30,7 @@ impl PacketPool {
         }
     }
 
-    pub(super) fn pack_transmit(&mut self, transmit: Transmit, buf: &Vec<u8>, margins: QuicPacketMargins) -> QuicPacket {
+    pub(super) fn pack_transmit(&mut self, transmit: Transmit, buf: &[u8], margins: QuicPacketMargins) -> QuicPacket {
         self.pack(transmit.destination, &buf[..transmit.size], margins)
     }
 }

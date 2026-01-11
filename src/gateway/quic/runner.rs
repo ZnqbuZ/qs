@@ -3,12 +3,11 @@ use crate::gateway::quic::endpoint::QuicOutputTx;
 use crate::gateway::quic::stream::{QuicStream, StreamDropRx};
 use crate::gateway::quic::utils::BufAcc;
 use crate::gateway::quic::QuicPacket;
-use bytes::{Bytes, BytesMut};
 use derive_more::{Deref, DerefMut};
-use quinn_proto::{Connection, ConnectionHandle, Event, StreamEvent, Transmit};
+use quinn_proto::{Connection, Event, StreamEvent};
 use std::collections::VecDeque;
 use std::io::{Error, ErrorKind};
-use std::mem::{forget, swap};
+use std::mem::swap;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 use tokio::select;
@@ -18,7 +17,7 @@ use tokio::time::sleep;
 use tracing::trace;
 
 #[derive(Debug, Deref, DerefMut)]
-pub(crate) struct Runner {
+pub(super) struct Runner {
     #[deref]
     #[deref_mut]
     ctrl: ConnCtrl,
@@ -28,9 +27,9 @@ pub(crate) struct Runner {
 }
 
 impl Runner {
-    pub(crate) fn new(conn: Connection, output: QuicOutputTx) -> (ConnCtrl, Self) {
+    pub(super) fn new(conn: Connection, output: QuicOutputTx) -> (ConnCtrl, Self) {
         let (drop_tx, drop_rx) = mpsc::channel(128);
-        let ctrl = ConnCtrl::new(conn, drop_tx);
+        let ctrl = ConnCtrl::new(conn);
         (
             ctrl.clone(),
             Self {
@@ -43,7 +42,7 @@ impl Runner {
 }
 
 impl Runner {
-    pub(crate) async fn run(&mut self) -> std::io::Result<()> {
+    pub(super) async fn run(&mut self) -> std::io::Result<()> {
         let mut pending_streams = VecDeque::new();
         let mut pending_wakers = Vec::new();
         let mut inbox = Vec::new();

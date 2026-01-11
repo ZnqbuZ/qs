@@ -6,17 +6,12 @@ mod gateway;
 use crate::gateway::quic::{
     QuicEndpoint, QuicOutputRx, QuicPacket, QuicPacketMargins, QuicStream,
 };
-use bytes::{Bytes, BytesMut};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use futures::pending;
-use parking_lot::Mutex;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::mpsc;
 use tracing::{info, trace};
 use tracing_subscriber::EnvFilter;
-use crate::gateway::quic::QuicPacketRx;
 
 // 模拟的客户端和服务器地址
 const SERVER_ADDR: &str = "127.0.0.1:4433";
@@ -77,7 +72,7 @@ async fn benchmark_throughput() {
     let c_arc = client.clone();
 
     // Network: Client -> Server
-    let c2s = tokio::spawn(async move {
+    let _c2s = tokio::spawn(async move {
         let mut rx = client_packet_rx;
         while let Some(pkt) = rx.recv().await {
             // trace!("Network: Client -> Server packet");
@@ -86,7 +81,7 @@ async fn benchmark_throughput() {
     });
 
     // Network: Server -> Client
-    let s2c = tokio::spawn(async move {
+    let _s2c = tokio::spawn(async move {
         let mut rx = server_packet_rx;
         while let Some(pkt) = rx.recv().await {
             // trace!("Network: Server -> Client packet");
@@ -124,7 +119,7 @@ async fn benchmark_throughput() {
             // Scope 1: 临界区，持有锁
             {
                 trace!("Client: 尝试打开流...");
-                let mut endpoint = client.clone();
+                let endpoint = client.clone();
                 // 尝试打开流
                 if let Ok(s) = endpoint.open(server_addr, None).await {
                     break s; // 成功！跳出循环，锁会自动释放
@@ -216,8 +211,24 @@ async fn benchmark_latency_pps() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Client: Ping Pong
-    let mut endpoint = client.clone();
-    let mut stream = endpoint.open(SERVER_ADDR.parse().unwrap(), None).await.unwrap();
+    let endpoint = client.clone();
+    let mut stream = loop {
+        // Scope 1: 临界区，持有锁
+        {
+            trace!("Client: 尝试打开流...");
+            let endpoint = client.clone();
+            // 尝试打开流
+            if let Ok(s) = endpoint.open(SERVER_ADDR.parse().unwrap(), None).await {
+                break s; // 成功！跳出循环，锁会自动释放
+            }
+            // 如果失败，锁会在这个花括号结束时自动释放
+            // 或者你可以手动调用 drop(endpoint);
+        }
+
+        // Scope 2: 无锁状态
+        // 关键：此时没有持有锁！网络转发任务可以获取锁并填入 Server 的响应包
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
     drop(endpoint);
 
     let payload = vec![0u8; 64]; // 小包 64字节
@@ -237,4 +248,144 @@ async fn benchmark_latency_pps() {
     println!("Iterations: {}", iterations);
     println!("平均 RTT 延迟: {:.2} µs", avg_latency);
     println!("PPS (Transactions/s): {:.2}", pps);
+}
+
+/// 测试 3: 多流并发吞吐量 (Concurrent Throughput)
+async fn benchmark_concurrent_throughput() {
+    info!("\n--- 测试 3: 多流并发吞吐量 (Concurrent Throughput) ---");
+    // 参数配置
+    let stream_count = 100; // 并发流数量
+    let size_per_stream = 10 * 1024 * 1024; // 每个流发送 10MB
+    let total_expected = stream_count as u64 * size_per_stream as u64;
+
+    let margins = QuicPacketMargins { header: 0, trailer: 0 };
+    // 创建新的端点实例，环境是隔离的
+    let (server, server_out) = QuicEndpoint::new(margins);
+    let (client, client_out) = QuicEndpoint::new(margins);
+
+    let server_packet_rx = server_out.packet;
+    let mut server_new_streams = server_out.stream;
+    let client_packet_rx = client_out.packet;
+
+    // Client 不需要 accept 流，所以这里忽略 client_out.stream
+
+    let server = Arc::new(server);
+    let client = Arc::new(client);
+
+    // 启动虚拟网络转发 (Network Simulation)
+    let s_arc = server.clone();
+    let c_arc = client.clone();
+
+    // Client -> Server
+    tokio::spawn(async move {
+        let mut rx = client_packet_rx;
+        while let Some(pkt) = rx.recv().await {
+            // 模拟网络传输，无延迟无丢包
+            let _ = s_arc.send(CLIENT_ADDR.parse().unwrap(), pkt.payload).await;
+        }
+    });
+
+    // Server -> Client
+    tokio::spawn(async move {
+        let mut rx = server_packet_rx;
+        while let Some(pkt) = rx.recv().await {
+            let _ = c_arc.send(SERVER_ADDR.parse().unwrap(), pkt.payload).await;
+        }
+    });
+
+    // --- Server 端逻辑：并发接收 ---
+    let server_handle = tokio::spawn(async move {
+        let mut join_set = tokio::task::JoinSet::new();
+        let mut total_bytes_received = 0;
+
+        // 我们预期接收 stream_count 个流
+        for _ in 0..stream_count {
+            if let Some(mut stream) = server_new_streams.recv().await {
+                join_set.spawn(async move {
+                    let mut buf = vec![0u8; 64 * 1024]; // 64KB buffer
+                    let mut stream_received = 0;
+                    loop {
+                        match stream.read(&mut buf).await {
+                            Ok(0) => break, // EOF
+                            Ok(n) => stream_received += n,
+                            Err(_) => break, // Error or Reset
+                        }
+                    }
+                    stream_received
+                });
+            }
+        }
+
+        // 等待所有流接收完毕并统计流量
+        while let Some(res) = join_set.join_next().await {
+            total_bytes_received += res.unwrap_or(0);
+        }
+        total_bytes_received
+    });
+
+    // --- Client 端逻辑：握手并并发发送 ---
+    let client_handle = tokio::spawn(async move {
+        // 1. 等待握手完成 (Wait for handshake)
+        // 这里的逻辑与之前修复的一样，通过不断尝试 open 来确保连接建立
+        let endpoint = client.clone();
+        loop {
+            match endpoint.open(SERVER_ADDR.parse().unwrap(), None).await {
+                Ok(mut s) => {
+                    // 握手成功，关闭这个探测流
+                    let _ = s.shutdown().await;
+                    break;
+                },
+                Err(_) => tokio::time::sleep(Duration::from_millis(5)).await,
+            }
+        }
+        trace!("Client: 握手完成，开始并发发送...");
+
+        let start = Instant::now();
+        let mut join_set = tokio::task::JoinSet::new();
+        // 预分配一个只读数据块，避免测试中频繁分配内存影响结果
+        let data = Arc::new(vec![1u8; 64 * 1024]);
+
+        for i in 0..stream_count {
+            let ep = client.clone();
+            let data = data.clone();
+            join_set.spawn(async move {
+                let addr = SERVER_ADDR.parse().unwrap();
+                // 打开流
+                let mut stream = ep.open(addr, None).await.expect("Failed to open stream");
+
+                let mut sent = 0;
+                while sent < size_per_stream {
+                    // 发送数据
+                    stream.write_all(&data).await.expect("Write failed");
+                    sent += data.len();
+                }
+                // 关闭写端，发送 FIN
+                stream.shutdown().await.expect("Shutdown failed");
+                trace!("Client: Stream {} finished", i);
+            });
+        }
+
+        // 等待所有发送任务完成
+        while let Some(res) = join_set.join_next().await {
+            res.unwrap();
+        }
+
+        start.elapsed()
+    });
+
+    // 等待测试结束
+    let duration = client_handle.await.unwrap();
+    let total_bytes = server_handle.await.unwrap();
+
+    // 结果输出
+    let mb = total_bytes as f64 / 1024.0 / 1024.0;
+    let secs = duration.as_secs_f64();
+    let throughput_mb = mb / secs;
+    let throughput_gbps = (mb * 8.0) / 1024.0 / secs;
+
+    info!("--- 测试结果 ---");
+    info!("并发流数量: {}", stream_count);
+    info!("总接收数据: {:.2} MB (预期: {:.2} MB)", mb, total_expected as f64 / 1024.0 / 1024.0);
+    info!("总耗时: {:.4} s", secs);
+    info!("聚合带宽: {:.2} MB/s ({:.2} Gbps)", throughput_mb, throughput_gbps);
 }
