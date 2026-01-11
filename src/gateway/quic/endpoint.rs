@@ -18,19 +18,21 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
 use tokio::time::sleep_until;
 
-#[derive(Debug, Constructor)]
+#[derive(Debug)]
 pub struct QuicCtrl {
-    cmd_tx: QuicCmdTx,
+    cmd_tx: QuicCmdTx,packet_tx: QuicCmdTx,   // [新增] 专用通道，用于发送 InputPacket
 }
 
-impl QuicCtrl {
-    #[inline]
-    pub async fn send(&self, packet: QuicPacket) -> Result<(), Error> {
-        self.cmd_tx
-            .send(QuicCmd::InputPacket(packet))
-            .await
-            .map_err(|e| Error::msg(format!("Failed to send QuicCmd::PacketIncoming: {:?}", e)))
-    }
+impl QuicCtrl {pub fn new(cmd_tx: QuicCmdTx, packet_tx: QuicCmdTx) -> Self {
+    Self { cmd_tx, packet_tx }
+}#[inline]
+pub async fn send(&self, packet: QuicPacket) -> Result<(), Error> {
+    // [修改] 发送包时走 packet_tx，避免被 stream write 阻塞
+    self.packet_tx
+        .send(QuicCmd::InputPacket(packet))
+        .await
+        .map_err(|e| Error::msg(format!("Failed to send QuicCmd::PacketIncoming: {:?}", e)))
+}
 
     #[inline]
     pub async fn connect(
@@ -151,12 +153,12 @@ impl QuicEndpoint {
         packet_margins: QuicPacketMargins,
     ) -> Option<(QuicPacketRx, QuicStreamRx)> {
         self.endpoint.as_ref()?;
-
-        let (cmd_tx, mut cmd_rx) = mpsc::channel(500_000);
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(500_000); // 依然大容量，用于 Write
+        let (packet_tx, mut packet_rx2) = mpsc::channel(500_000); // 依然大容量，用于 Packet Input
         let (net_evt_tx, net_evt_rx) = mpsc::channel(500_000);
         let (incoming_stream_tx, incoming_stream_rx) = switched_channel(128);
 
-        self.ctrl = Some(QuicCtrl::new(cmd_tx.clone()).into());
+        self.ctrl = Some(QuicCtrl::new(cmd_tx.clone(), packet_tx).into());
         let packet_rx = QuicPacketRx {
             net_evt_rx,
             packet_margins,
@@ -181,7 +183,33 @@ impl QuicEndpoint {
                     .unwrap_or(Instant::now() + Duration::from_secs(60));
 
                 select! {
-                    Some(cmd) = cmd_rx.recv() => drv.execute(cmd),
+                    // [核心修改] biased 模式 + 优先处理 packet_rx
+                    // 这样即使 cmd_rx 堆积如山，ACK 包也能立刻被处理，维持连接活性
+                    biased;
+
+                    Some(cmd) = packet_rx2.recv() => {
+                        drv.execute(cmd);
+                        // 贪婪消费 Packets
+                        for _ in 0..100 {
+                            match packet_rx2.try_recv() {
+                                Ok(c) => drv.execute(c),
+                                Err(_) => break,
+                            }
+                        }
+                        drv.flush_io();
+                    },
+
+                    Some(cmd) = cmd_rx.recv() => {
+                        drv.execute(cmd);
+                        // 贪婪消费 Commands (Write)
+                        for _ in 0..100 {
+                            match cmd_rx.try_recv() {
+                                Ok(c) => drv.execute(c),
+                                Err(_) => break,
+                            }
+                        }
+                        drv.flush_io();
+                    },
                     _ = sleep_until(min_timeout.into()) => drv.handle_timeout(),
                 }
             }

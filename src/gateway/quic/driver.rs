@@ -11,7 +11,7 @@ use quinn_proto::{
     ClientConfig, ConnectError, Connection, ConnectionHandle, DatagramEvent, Dir, Endpoint, Event,
     ReadError, ReadableError, StreamEvent, StreamId, WriteError,
 };
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -61,6 +61,7 @@ pub(crate) struct QuicDriver {
     buf: Vec<u8>,
     packet_pool: QuicBufferPool,
     packet_margins: QuicPacketMargins,
+    dirty_conns: HashSet<ConnectionHandle>,
 }
 
 impl QuicDriver {
@@ -80,6 +81,24 @@ impl QuicDriver {
             buf: Vec::with_capacity(64 * 1024),
             packet_pool: QuicBufferPool::new(QUIC_PACKET_POOL_MIN_CAPACITY),
             packet_margins,
+            dirty_conns: HashSet::new(), // 初始化
+        }
+    }
+    // [3] 新增辅助方法：标记连接为脏
+    fn mark_dirty(&mut self, conn_hdl: ConnectionHandle) {
+        self.dirty_conns.insert(conn_hdl);
+    }
+    // [4] 新增方法：统一驱动 IO (Batch Flush)
+    // 这是性能优化的核心：处理完一批命令后，再一次性把所有包发出去
+    pub fn flush_io(&mut self) {
+        if self.dirty_conns.is_empty() {
+            return;
+        }
+
+        // 将 dirty_conns 里的连接 handle 取出来遍历
+        let handles: Vec<ConnectionHandle> = self.dirty_conns.drain().collect();
+        for conn_hdl in handles {
+            self.process_conn(conn_hdl); // 这里才真正调用 quinn 生成 UDP 包
         }
     }
 
@@ -212,7 +231,7 @@ impl QuicDriver {
                     let _ = conn
                         .send_stream(stream_hdl.stream_id)
                         .reset(error_code.into());
-                    self.process_conn(stream_hdl.conn_hdl);
+                    self.mark_dirty(stream_hdl.conn_hdl);
                 }
             }
 
@@ -224,7 +243,7 @@ impl QuicDriver {
                     let _ = conn
                         .recv_stream(stream_hdl.stream_id)
                         .stop(error_code.into());
-                    self.process_conn(stream_hdl.conn_hdl);
+                    self.mark_dirty(stream_hdl.conn_hdl);
                 }
             }
 
@@ -265,7 +284,7 @@ impl QuicDriver {
                     Ok((conn_hdl, conn)) => {
                         trace!("Accepted connection {:?}", conn_hdl);
                         self.conns.insert(conn_hdl, (conn, HashMap::new()));
-                        self.process_conn(conn_hdl);
+                        self.mark_dirty(conn_hdl);
                     }
                     Err(e) => {
                         error!("Failed to accept connection: {:?}", e);
@@ -276,7 +295,7 @@ impl QuicDriver {
             Some(DatagramEvent::ConnectionEvent(conn_hdl, event)) => {
                 if let Some((conn, _)) = self.conns.get_mut(&conn_hdl) {
                     conn.handle_event(event);
-                    self.process_conn(conn_hdl);
+                    self.mark_dirty(conn_hdl);
                 }
             }
 
@@ -303,7 +322,7 @@ impl QuicDriver {
             self.endpoint
                 .connect(Instant::now(), self.client_config.clone(), addr, "")?;
         self.conns.insert(conn_hdl, (conn, HashMap::new()));
-        self.process_conn(conn_hdl);
+        self.mark_dirty(conn_hdl);
         Ok(conn_hdl)
     }
 
@@ -450,7 +469,7 @@ impl QuicDriver {
             }
         }
 
-        self.process_conn(conn_hdl);
+        self.mark_dirty(conn_hdl);
     }
 }
 
@@ -610,8 +629,9 @@ impl QuicDriver {
                 conn.handle_timeout(now);
             }
 
-            self.process_conn(conn_hdl);
+            self.mark_dirty(conn_hdl);
         }
+        self.flush_io()
     }
 
     pub fn min_timeout(&mut self) -> Option<Instant> {
