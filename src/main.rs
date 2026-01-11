@@ -17,7 +17,7 @@ use tracing_subscriber::EnvFilter;
 const SERVER_ADDR: &str = "127.0.0.1:4433";
 const CLIENT_ADDR: &str = "127.0.0.1:10000";
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() {
     // console_subscriber::init();
 
@@ -39,7 +39,7 @@ async fn main() {
 
     benchmark_throughput().await;
     benchmark_latency_pps().await;
-    // benchmark_concurrent_connections().await; // 根据需要取消注释
+    benchmark_concurrent_throughput().await;
 }
 
 /// 测试 1: 最大单流吞吐量 (Bandwidth)
@@ -71,21 +71,43 @@ async fn benchmark_throughput() {
     let s_arc = server.clone();
     let c_arc = client.clone();
 
-    // Network: Client -> Server
-    let _c2s = tokio::spawn(async move {
+    // --- [修复 1] Network: Client -> Server ---
+    // 这个任务压力最大，必须 yield，否则会饿死 ACK 回传任务
+    tokio::spawn(async move {
         let mut rx = client_packet_rx;
+        // 使用 limit 限制每次连续处理的包数量，避免单次占用时间过长
+        let mut count = 0;
         while let Some(pkt) = rx.recv().await {
-            // trace!("Network: Client -> Server packet");
-            s_arc.send(CLIENT_ADDR.parse().unwrap(), pkt.payload).await.unwrap();
+            // 如果 send 返回 Err，说明 Server 已经关闭/崩溃，我们应该退出而不是 Panic
+            if s_arc.send(CLIENT_ADDR.parse().unwrap(), pkt.payload).await.is_err() {
+                break;
+            }
+
+            // 每转发 16 个包，强制让出一次 CPU
+            // 这给了 Server 处理包和生成 ACK 的机会，也给了另一个网络任务转发 ACK 的机会
+            count += 1;
+            if count >= 16 {
+                count = 0;
+                tokio::task::yield_now().await;
+            }
         }
     });
 
-    // Network: Server -> Client
-    let _s2c = tokio::spawn(async move {
+    // --- [修复 2] Network: Server -> Client ---
+    // 负责转发 ACK
+    tokio::spawn(async move {
         let mut rx = server_packet_rx;
+        let mut count = 0;
         while let Some(pkt) = rx.recv().await {
-            // trace!("Network: Server -> Client packet");
-            c_arc.send(SERVER_ADDR.parse().unwrap(), pkt.payload).await.unwrap();
+            if c_arc.send(SERVER_ADDR.parse().unwrap(), pkt.payload).await.is_err() {
+                break;
+            }
+            // 同样加入 yield
+            count += 1;
+            if count >= 16 {
+                count = 0;
+                tokio::task::yield_now().await;
+            }
         }
     });
 

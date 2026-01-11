@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use tokio::select;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TryRecvError;
+use tokio::task::yield_now;
 use tokio::time::sleep;
 use tracing::trace;
 
@@ -50,7 +51,7 @@ impl Runner {
         let mut pending_chunks = VecDeque::new();
 
         let mut timer = Box::pin(sleep(Duration::MAX));
-        let mut timeout;
+        let mut timeout: Option<Instant> = None;
         let mut handle_timeout = false;
 
         // 启动时强制唤醒一次，确保发送握手包
@@ -67,6 +68,7 @@ impl Runner {
             // 只要醒来，就必须检查状态机，因为可能需要发送握手包或者重传
             {
                 let mut state = self.ctrl.state.lock();
+                let now = Instant::now();
 
                 // 处理收到的包
                 for evt in inbox.drain(..) {
@@ -74,22 +76,24 @@ impl Runner {
                     worked = true;
                 }
 
-                // 处理超时
-                if handle_timeout {
-                    state.conn.handle_timeout(Instant::now());
+                // [Fix]: 即使 select! 没触发，只要时间到了，就必须处理超时
+                // 这是修复 "Connection Lost" 的关键：防止在高吞吐下的时间饥饿
+                if handle_timeout || timeout.is_some_and(|t| t <= now) {
+                    state.conn.handle_timeout(now);
                     handle_timeout = false;
+                    worked = true; // 标记为工作过，防止 cpu 空转
                 }
 
                 // 处理流关闭
-                loop {
-                    match self.drop_rx.try_recv() {
-                        Ok(id) => state.close(id),
-                        Err(TryRecvError::Empty) => break,
-                        Err(TryRecvError::Disconnected) => {
-                            return Err(Error::other("Stream drop channel closed"));
-                        }
-                    }
-                }
+                // loop {
+                //     match self.drop_rx.try_recv() {
+                //         Ok(id) => state.close(id),
+                //         Err(TryRecvError::Empty) => break,
+                //         Err(TryRecvError::Disconnected) => {
+                //             return Err(Error::other("Stream drop channel closed"));
+                //         }
+                //     }
+                // }
 
                 // 驱动状态机 (处理握手、流开启等)
                 while let Some(evt) = state.conn.poll() {
@@ -112,15 +116,13 @@ impl Runner {
                                 pending_wakers.push(waker);
                             }
                         }
-                        Event::ConnectionLost { .. } => {
-                            return Err(Error::new(ErrorKind::ConnectionReset, "Connection lost"));
+                        Event::ConnectionLost { reason } => {
+                            return Err(Error::new(ErrorKind::ConnectionReset, format!("Connection lost: {:?}", reason)));
                         }
                         _ => {}
                     }
                 }
 
-                let mut count = 0;
-                let batch_size = 4;
                 // 生成待发送数据包
                 let mut chunk = BufAcc::new(256 * 1200);
                 let mut transmits = VecDeque::new();
@@ -131,17 +133,8 @@ impl Runner {
                     ) {
                         Some(buf) => buf,
                         None => {
-                            count += 1;
-                            trace!(
-                                "QUIC transmit chunk full, allocating new chunk (currently {:?} chunks)",
-                                count
-                            );
                             pending_chunks.push_back(chunk.renew());
                             pending_transmits.push_back(transmits);
-                            if count >= batch_size {
-                                trace!("QUIC transmit batch size {} reached, breaking", batch_size);
-                                // break;
-                            }
                             transmits = VecDeque::new();
                             chunk
                                 .buf(

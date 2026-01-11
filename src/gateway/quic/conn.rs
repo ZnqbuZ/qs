@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::task::Waker;
 use std::time::Instant;
 use tokio::sync::Notify;
+use tracing::{info, trace};
 
 #[derive(Debug)]
 pub(super) struct ConnState {
@@ -109,8 +110,8 @@ impl ConnCtrl {
     }
 
     pub(super) fn send(&self, evt: ConnectionEvent) {
-        if let Some(mut inner) = self.state.try_lock() {
-            inner.conn.handle_event(evt);
+        if let Some(mut state) = self.state.try_lock() {
+            state.conn.handle_event(evt);
         } else {
             let mut inbox = self.inbox.lock();
             if inbox.len() >= QUIC_CONN_INBOX_CAPACITY {
