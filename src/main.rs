@@ -39,11 +39,11 @@ async fn main() {
         .with_env_filter(filter)
         .init();
 
-    trace!("=== 开始 QUIC 库性能基准测试 ===");
-    trace!("测试环境: 内存直连 (In-memory), 排除 OS UDP 栈干扰");
+    info!("=== 开始 QUIC 库性能基准测试 ===");
+    info!("测试环境: 内存直连 (In-memory), 排除 OS UDP 栈干扰");
 
     benchmark_throughput().await;
-    // benchmark_latency_pps().await;
+    benchmark_latency_pps().await;
     // benchmark_concurrent_connections().await; // 根据需要取消注释
 }
 
@@ -140,7 +140,7 @@ async fn benchmark_throughput() {
 
         trace!("Client: 流已打开，开始发送数据...");
         // 拿到流之后继续业务逻辑...
-        let payload_size = 1024 * 1024 * 512; // 1GB
+        let payload_size = 1024 * 1024 * 8192; // 1GB
         let chunk_size = 64 * 1024;
         let data = vec![1u8; chunk_size];
 

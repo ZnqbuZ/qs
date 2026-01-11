@@ -28,12 +28,29 @@
     </cargoProject>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="ec1f0d40-3ac5-4f78-ac6d-97b72ebc55d6" name="更改" comment="Adjust payload size and optimize chunk allocation in QUIC transmission">
+    <list default="true" id="ec1f0d40-3ac5-4f78-ac6d-97b72ebc55d6" name="更改" comment="Add BufAcc, used in Runner poll_transmit">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/gateway/quic2/packet.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/gateway/quic2/packet.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/qn/src/main.rs" beforeDir="false" afterPath="$PROJECT_DIR$/qn/src/main.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/qn/target/.rustc_info.json" beforeDir="false" afterPath="$PROJECT_DIR$/qn/target/.rustc_info.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/qn/target/debug/.fingerprint/qn-69f93686641372b0/dep-test-bin-qn" beforeDir="false" afterPath="$PROJECT_DIR$/qn/target/debug/.fingerprint/qn-69f93686641372b0/dep-test-bin-qn" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/qn/target/debug/deps/qn.exe" beforeDir="false" afterPath="$PROJECT_DIR$/qn/target/debug/deps/qn.exe" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/qn/target/debug/deps/qn.pdb" beforeDir="false" afterPath="$PROJECT_DIR$/qn/target/debug/deps/qn.pdb" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/qn/target/debug/incremental/qn-1piy2lqncwd79/s-heqm9emm94-1vs2bgn-1qcmn29dbh14sfd3981hibvxv/dep-graph.bin" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/qn/target/debug/incremental/qn-1piy2lqncwd79/s-heqm9emm94-1vs2bgn-1qcmn29dbh14sfd3981hibvxv/query-cache.bin" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/qn/target/debug/incremental/qn-1piy2lqncwd79/s-heqm9emm94-1vs2bgn-1qcmn29dbh14sfd3981hibvxv/work-products.bin" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/qn/target/debug/incremental/qn-1piy2lqncwd79/s-heqm9emm94-1vs2bgn.lock" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/qn/target/debug/incremental/qn-3g18mdrzgpri5/s-heqm9emtkk-1y7ixuu-0d2pyveuvk1y5gnjf3dge6td0/dep-graph.bin" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/qn/target/debug/incremental/qn-3g18mdrzgpri5/s-heqm9emtkk-1y7ixuu-0d2pyveuvk1y5gnjf3dge6td0/query-cache.bin" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/qn/target/debug/incremental/qn-3g18mdrzgpri5/s-heqm9emtkk-1y7ixuu-0d2pyveuvk1y5gnjf3dge6td0/work-products.bin" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/qn/target/debug/incremental/qn-3g18mdrzgpri5/s-heqm9emtkk-1y7ixuu.lock" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/qn/target/debug/qn.exe" beforeDir="false" afterPath="$PROJECT_DIR$/qn/target/debug/qn.exe" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/qn/target/debug/qn.pdb" beforeDir="false" afterPath="$PROJECT_DIR$/qn/target/debug/qn.pdb" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/qn/target/release/deps/qn.exe" beforeDir="false" afterPath="$PROJECT_DIR$/qn/target/release/deps/qn.exe" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/qn/target/release/deps/qn.pdb" beforeDir="false" afterPath="$PROJECT_DIR$/qn/target/release/deps/qn.pdb" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/qn/target/release/qn.exe" beforeDir="false" afterPath="$PROJECT_DIR$/qn/target/release/qn.exe" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/qn/target/release/qn.pdb" beforeDir="false" afterPath="$PROJECT_DIR$/qn/target/release/qn.pdb" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/gateway/quic2/runner.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/gateway/quic2/runner.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/gateway/quic2/stream.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/gateway/quic2/stream.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/gateway/quic2/utils.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/gateway/quic2/utils.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/main.rs" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -87,32 +104,33 @@
     <option name="showMembers" value="true" />
     <option name="showVisibilityIcons" value="true" />
   </component>
-  <component name="PropertiesComponent">{
-  &quot;keyToString&quot;: {
-    &quot;Cargo.Run qn.executor&quot;: &quot;Run&quot;,
-    &quot;Cargo.Run qs.executor&quot;: &quot;Run&quot;,
-    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.MCP Project settings loaded&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.RadMigrateCodeStyle&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.cidr.known.project.marker&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.readMode.enableVisualFormatting&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
-    &quot;cf.first.check.clang-format&quot;: &quot;false&quot;,
-    &quot;cidr.known.project.marker&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;master&quot;,
-    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
-    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
-    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
-    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
-    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
-    &quot;org.rust.cargo.project.model.PROJECT_DISCOVERY&quot;: &quot;true&quot;,
-    &quot;settings.editor.selected.configurable&quot;: &quot;preferences.lookFeel&quot;,
-    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "Cargo.Run qn (1).executor": "Run",
+    "Cargo.Run qn.executor": "Run",
+    "Cargo.Run qs.executor": "Run",
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "RunOnceActivity.MCP Project settings loaded": "true",
+    "RunOnceActivity.RadMigrateCodeStyle": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.cidr.known.project.marker": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "RunOnceActivity.readMode.enableVisualFormatting": "true",
+    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
+    "cf.first.check.clang-format": "false",
+    "cidr.known.project.marker": "true",
+    "git-widget-placeholder": "master",
+    "node.js.detected.package.eslint": "true",
+    "node.js.detected.package.tslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.tslint": "(autodetect)",
+    "nodejs_package_manager_path": "npm",
+    "org.rust.cargo.project.model.PROJECT_DISCOVERY": "true",
+    "settings.editor.selected.configurable": "preferences.lookFeel",
+    "vue.rearranger.settings.migration": "true"
   }
-}</component>
+}]]></component>
   <component name="RecentsManager">
     <key name="MoveFile.RECENT_KEYS">
       <recent name="D:\OneDrive - ZnqbuZ\repos\qs\src\gateway" />
@@ -123,6 +141,24 @@
     <option name="tool" value="Clippy" />
   </component>
   <component name="RunManager" selected="Cargo.Run qs">
+    <configuration name="Run qn (1)" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
+      <option name="buildProfileId" value="release" />
+      <option name="command" value="run --package qn --bin qn" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$/qn" />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
     <configuration name="Run qn" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
       <option name="buildProfileId" value="release" />
       <option name="command" value="run --package qn --bin qn" />
@@ -145,7 +181,9 @@
       <option name="buildProfileId" value="release" />
       <option name="command" value="run --package qs --bin qs" />
       <option name="workingDirectory" value="file://$PROJECT_DIR$" />
-      <envs />
+      <envs>
+        <env name="RUSTFLAGS" value="--cfg tokio_unstable" />
+      </envs>
       <option name="emulateTerminal" value="true" />
       <option name="channel" value="DEFAULT" />
       <option name="requiredFeatures" value="true" />
@@ -179,12 +217,14 @@
     </configuration>
     <list>
       <item itemvalue="Cargo.Test" />
+      <item itemvalue="Cargo.Run qn (1)" />
       <item itemvalue="Cargo.Run qn" />
       <item itemvalue="Cargo.Run qs" />
     </list>
     <recent_temporary>
       <list>
         <item itemvalue="Cargo.Run qs" />
+        <item itemvalue="Cargo.Run qn (1)" />
         <item itemvalue="Cargo.Run qn" />
       </list>
     </recent_temporary>
@@ -204,7 +244,7 @@
       <workItem from="1767910797853" duration="63000" />
       <workItem from="1767910931766" duration="651000" />
       <workItem from="1767947959986" duration="16408000" />
-      <workItem from="1768136606815" duration="20864000" />
+      <workItem from="1768136606815" duration="22812000" />
     </task>
     <task id="LOCAL-00001" summary="Refactor QUIC module structure and improve performance benchmarks">
       <option name="closed" value="true" />
@@ -222,7 +262,15 @@
       <option name="project" value="LOCAL" />
       <updated>1768155238400</updated>
     </task>
-    <option name="localTasksCounter" value="3" />
+    <task id="LOCAL-00003" summary="Add BufAcc, used in Runner poll_transmit">
+      <option name="closed" value="true" />
+      <created>1768159349705</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1768159349705</updated>
+    </task>
+    <option name="localTasksCounter" value="4" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -242,28 +290,8 @@
   <component name="VcsManagerConfiguration">
     <MESSAGE value="Refactor QUIC module structure and improve performance benchmarks" />
     <MESSAGE value="Adjust payload size and optimize chunk allocation in QUIC transmission" />
-    <option name="LAST_COMMIT_MESSAGE" value="Adjust payload size and optimize chunk allocation in QUIC transmission" />
-  </component>
-  <component name="XDebuggerManager">
-    <breakpoint-manager>
-      <breakpoints>
-        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
-          <url>file://$PROJECT_DIR$/src/gateway/quic2/runner.rs</url>
-          <line>134</line>
-          <option name="timeStamp" value="8" />
-        </line-breakpoint>
-        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
-          <url>file://$PROJECT_DIR$/src/gateway/quic2/runner.rs</url>
-          <line>177</line>
-          <option name="timeStamp" value="9" />
-        </line-breakpoint>
-        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
-          <url>file://$PROJECT_DIR$/src/gateway/quic2/runner.rs</url>
-          <line>187</line>
-          <option name="timeStamp" value="10" />
-        </line-breakpoint>
-      </breakpoints>
-    </breakpoint-manager>
+    <MESSAGE value="Add BufAcc, used in Runner poll_transmit" />
+    <option name="LAST_COMMIT_MESSAGE" value="Add BufAcc, used in Runner poll_transmit" />
   </component>
   <component name="XSLT-Support.FileAssociations.UIState">
     <expand />

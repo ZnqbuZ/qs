@@ -121,6 +121,7 @@ impl Runner {
                 }
 
                 let mut count = 0;
+                let batch_size = 4;
                 // 生成待发送数据包
                 let mut chunk = BufAcc::new(256 * 1200);
                 let mut transmits = VecDeque::new();
@@ -138,6 +139,10 @@ impl Runner {
                             );
                             pending_chunks.push_back(chunk.renew());
                             pending_transmits.push_back(transmits);
+                            if count >= batch_size {
+                                trace!("QUIC transmit batch size {} reached, breaking", batch_size);
+                                // break;
+                            }
                             transmits = VecDeque::new();
                             chunk
                                 .buf(
@@ -177,11 +182,7 @@ impl Runner {
             let (header, trailer) = self.output.packet.margins.into();
             while !pending_transmits.is_empty() || !pending_streams.is_empty() {
                 select! {
-                    // 监听接收事件：如果有新包入队，立即停止发送，回去处理接收
-                    _ = self.ctrl.notify.notified() => {
-                        worked = true;
-                        break;
-                    }
+                    biased;
 
                     // 发送 Packet
                     res = self.output.packet.reserve(), if !pending_transmits.is_empty() => {
@@ -214,6 +215,12 @@ impl Runner {
                             }
                             Err(_) => return Err(Error::new(ErrorKind::BrokenPipe, "Stream channel closed")),
                         }
+                    }
+
+                    // 监听接收事件：如果有新包入队，立即停止发送，回去处理接收
+                    _ = self.ctrl.notify.notified() => {
+                        worked = true;
+                        break;
                     }
                 }
             }
