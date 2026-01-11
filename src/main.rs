@@ -1,9 +1,9 @@
 mod gateway;
 
 // 假设你的库名为 my_quic_lib，且相关模块是公开的
-// 如果是在同一个 crate 内部测试，使用 crate::gateway::quic2...
+// 如果是在同一个 crate 内部测试，使用 crate::gateway::quic...
 #[allow(unused_imports)]
-use crate::gateway::quic2::{
+use crate::gateway::quic::{
     QuicEndpoint, QuicOutputRx, QuicPacket, QuicPacketMargins, QuicStream,
 };
 use bytes::{Bytes, BytesMut};
@@ -16,7 +16,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tracing::{info, trace};
 use tracing_subscriber::EnvFilter;
-use crate::gateway::quic2::QuicPacketRx;
+use crate::gateway::quic::QuicPacketRx;
 
 // 模拟的客户端和服务器地址
 const SERVER_ADDR: &str = "127.0.0.1:4433";

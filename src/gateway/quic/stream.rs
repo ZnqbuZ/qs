@@ -5,8 +5,8 @@ use quinn_proto::{FinishError, ReadError, ReadableError, StreamId, WriteError};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::mpsc;
 use tracing::trace;
-use crate::gateway::quic2::conn::{ConnCtrl, ConnState};
-use crate::gateway::quic2::utils::{BufPool, SwitchedReceiver, SwitchedSender};
+use crate::gateway::quic::conn::{ConnCtrl, ConnState};
+use crate::gateway::quic::utils::{BufPool, SwitchedReceiver, SwitchedSender};
 
 pub(crate) type QuicStreamTx = SwitchedSender<QuicStream>;
 pub type QuicStreamRx = SwitchedReceiver<QuicStream>;

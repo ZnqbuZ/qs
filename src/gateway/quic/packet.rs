@@ -4,7 +4,7 @@ use derive_more::{Constructor, Deref, DerefMut, From, Into};
 use quinn_proto::Transmit;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::{SendError, TrySendError};
-use crate::gateway::quic2::utils::{BufMargins, BufPool};
+use crate::gateway::quic::utils::{BufMargins, BufPool};
 
 const PACKET_POOL_MIN_CAPACITY: usize = 65536;
 

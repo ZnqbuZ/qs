@@ -8,7 +8,7 @@ use std::time::Instant;
 use derive_more::{Deref, DerefMut};
 use parking_lot::Mutex;
 use tokio::sync::Notify;
-use crate::gateway::quic2::stream::{QuicStream, StreamDropTx};
+use crate::gateway::quic::stream::{QuicStream, StreamDropTx};
 
 #[derive(Debug)]
 pub(crate) struct ConnState {

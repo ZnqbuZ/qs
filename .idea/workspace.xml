@@ -28,28 +28,16 @@
     </cargoProject>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="ec1f0d40-3ac5-4f78-ac6d-97b72ebc55d6" name="更改" comment="Add BufAcc, used in Runner poll_transmit">
+    <list default="true" id="ec1f0d40-3ac5-4f78-ac6d-97b72ebc55d6" name="更改" comment="remove old impls">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/qn/src/main.rs" beforeDir="false" afterPath="$PROJECT_DIR$/qn/src/main.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/qn/target/.rustc_info.json" beforeDir="false" afterPath="$PROJECT_DIR$/qn/target/.rustc_info.json" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/qn/target/debug/.fingerprint/qn-69f93686641372b0/dep-test-bin-qn" beforeDir="false" afterPath="$PROJECT_DIR$/qn/target/debug/.fingerprint/qn-69f93686641372b0/dep-test-bin-qn" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/qn/target/debug/deps/qn.exe" beforeDir="false" afterPath="$PROJECT_DIR$/qn/target/debug/deps/qn.exe" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/qn/target/debug/deps/qn.pdb" beforeDir="false" afterPath="$PROJECT_DIR$/qn/target/debug/deps/qn.pdb" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/qn/target/debug/incremental/qn-1piy2lqncwd79/s-heqm9emm94-1vs2bgn-1qcmn29dbh14sfd3981hibvxv/dep-graph.bin" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/qn/target/debug/incremental/qn-1piy2lqncwd79/s-heqm9emm94-1vs2bgn-1qcmn29dbh14sfd3981hibvxv/query-cache.bin" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/qn/target/debug/incremental/qn-1piy2lqncwd79/s-heqm9emm94-1vs2bgn-1qcmn29dbh14sfd3981hibvxv/work-products.bin" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/qn/target/debug/incremental/qn-1piy2lqncwd79/s-heqm9emm94-1vs2bgn.lock" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/qn/target/debug/incremental/qn-3g18mdrzgpri5/s-heqm9emtkk-1y7ixuu-0d2pyveuvk1y5gnjf3dge6td0/dep-graph.bin" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/qn/target/debug/incremental/qn-3g18mdrzgpri5/s-heqm9emtkk-1y7ixuu-0d2pyveuvk1y5gnjf3dge6td0/query-cache.bin" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/qn/target/debug/incremental/qn-3g18mdrzgpri5/s-heqm9emtkk-1y7ixuu-0d2pyveuvk1y5gnjf3dge6td0/work-products.bin" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/qn/target/debug/incremental/qn-3g18mdrzgpri5/s-heqm9emtkk-1y7ixuu.lock" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/qn/target/debug/qn.exe" beforeDir="false" afterPath="$PROJECT_DIR$/qn/target/debug/qn.exe" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/qn/target/debug/qn.pdb" beforeDir="false" afterPath="$PROJECT_DIR$/qn/target/debug/qn.pdb" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/qn/target/release/deps/qn.exe" beforeDir="false" afterPath="$PROJECT_DIR$/qn/target/release/deps/qn.exe" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/qn/target/release/deps/qn.pdb" beforeDir="false" afterPath="$PROJECT_DIR$/qn/target/release/deps/qn.pdb" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/qn/target/release/qn.exe" beforeDir="false" afterPath="$PROJECT_DIR$/qn/target/release/qn.exe" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/qn/target/release/qn.pdb" beforeDir="false" afterPath="$PROJECT_DIR$/qn/target/release/qn.pdb" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/gateway/quic2/runner.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/gateway/quic2/runner.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/gateway/mod.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/gateway/mod.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/gateway/quic2/conn.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/gateway/quic/conn.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/gateway/quic2/endpoint.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/gateway/quic/endpoint.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/gateway/quic2/mod.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/gateway/quic/mod.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/gateway/quic2/packet.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/gateway/quic/packet.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/gateway/quic2/runner.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/gateway/quic/runner.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/gateway/quic2/stream.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/gateway/quic/stream.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/gateway/quic2/utils.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/gateway/quic/utils.rs" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/main.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/main.rs" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -140,43 +128,7 @@
   <component name="RsExternalLinterProjectSettings">
     <option name="tool" value="Clippy" />
   </component>
-  <component name="RunManager" selected="Cargo.Run qs">
-    <configuration name="Run qn (1)" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
-      <option name="buildProfileId" value="release" />
-      <option name="command" value="run --package qn --bin qn" />
-      <option name="workingDirectory" value="file://$PROJECT_DIR$/qn" />
-      <envs />
-      <option name="emulateTerminal" value="true" />
-      <option name="channel" value="DEFAULT" />
-      <option name="requiredFeatures" value="true" />
-      <option name="allFeatures" value="false" />
-      <option name="withSudo" value="false" />
-      <option name="buildTarget" value="REMOTE" />
-      <option name="backtrace" value="SHORT" />
-      <option name="isRedirectInput" value="false" />
-      <option name="redirectInputPath" value="" />
-      <method v="2">
-        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
-      </method>
-    </configuration>
-    <configuration name="Run qn" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
-      <option name="buildProfileId" value="release" />
-      <option name="command" value="run --package qn --bin qn" />
-      <option name="workingDirectory" value="file://$PROJECT_DIR$/qn" />
-      <envs />
-      <option name="emulateTerminal" value="true" />
-      <option name="channel" value="DEFAULT" />
-      <option name="requiredFeatures" value="true" />
-      <option name="allFeatures" value="false" />
-      <option name="withSudo" value="false" />
-      <option name="buildTarget" value="REMOTE" />
-      <option name="backtrace" value="SHORT" />
-      <option name="isRedirectInput" value="false" />
-      <option name="redirectInputPath" value="" />
-      <method v="2">
-        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
-      </method>
-    </configuration>
+  <component name="RunManager">
     <configuration name="Run qs" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
       <option name="buildProfileId" value="release" />
       <option name="command" value="run --package qs --bin qs" />
@@ -197,35 +149,9 @@
         <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
       </method>
     </configuration>
-    <configuration name="Test" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
-      <option name="buildProfileId" value="test" />
-      <option name="command" value="test --package qs --lib tests" />
-      <option name="workingDirectory" value="file://$PROJECT_DIR$" />
-      <envs />
-      <option name="emulateTerminal" value="true" />
-      <option name="channel" value="DEFAULT" />
-      <option name="requiredFeatures" value="true" />
-      <option name="allFeatures" value="false" />
-      <option name="withSudo" value="false" />
-      <option name="buildTarget" value="REMOTE" />
-      <option name="backtrace" value="SHORT" />
-      <option name="isRedirectInput" value="false" />
-      <option name="redirectInputPath" value="" />
-      <method v="2">
-        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
-      </method>
-    </configuration>
-    <list>
-      <item itemvalue="Cargo.Test" />
-      <item itemvalue="Cargo.Run qn (1)" />
-      <item itemvalue="Cargo.Run qn" />
-      <item itemvalue="Cargo.Run qs" />
-    </list>
     <recent_temporary>
       <list>
         <item itemvalue="Cargo.Run qs" />
-        <item itemvalue="Cargo.Run qn (1)" />
-        <item itemvalue="Cargo.Run qn" />
       </list>
     </recent_temporary>
   </component>
@@ -244,7 +170,7 @@
       <workItem from="1767910797853" duration="63000" />
       <workItem from="1767910931766" duration="651000" />
       <workItem from="1767947959986" duration="16408000" />
-      <workItem from="1768136606815" duration="22812000" />
+      <workItem from="1768136606815" duration="23076000" />
     </task>
     <task id="LOCAL-00001" summary="Refactor QUIC module structure and improve performance benchmarks">
       <option name="closed" value="true" />
@@ -270,7 +196,15 @@
       <option name="project" value="LOCAL" />
       <updated>1768159349705</updated>
     </task>
-    <option name="localTasksCounter" value="4" />
+    <task id="LOCAL-00004" summary="remove old impls">
+      <option name="closed" value="true" />
+      <created>1768161529904</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1768161529904</updated>
+    </task>
+    <option name="localTasksCounter" value="5" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -291,7 +225,8 @@
     <MESSAGE value="Refactor QUIC module structure and improve performance benchmarks" />
     <MESSAGE value="Adjust payload size and optimize chunk allocation in QUIC transmission" />
     <MESSAGE value="Add BufAcc, used in Runner poll_transmit" />
-    <option name="LAST_COMMIT_MESSAGE" value="Add BufAcc, used in Runner poll_transmit" />
+    <MESSAGE value="remove old impls" />
+    <option name="LAST_COMMIT_MESSAGE" value="remove old impls" />
   </component>
   <component name="XSLT-Support.FileAssociations.UIState">
     <expand />

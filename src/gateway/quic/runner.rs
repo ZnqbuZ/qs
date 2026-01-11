@@ -1,8 +1,8 @@
-use crate::gateway::quic2::conn::ConnCtrl;
-use crate::gateway::quic2::endpoint::QuicOutputTx;
-use crate::gateway::quic2::stream::{QuicStream, StreamDropRx};
-use crate::gateway::quic2::utils::BufAcc;
-use crate::gateway::quic2::QuicPacket;
+use crate::gateway::quic::conn::ConnCtrl;
+use crate::gateway::quic::endpoint::QuicOutputTx;
+use crate::gateway::quic::stream::{QuicStream, StreamDropRx};
+use crate::gateway::quic::utils::BufAcc;
+use crate::gateway::quic::QuicPacket;
 use bytes::{Bytes, BytesMut};
 use derive_more::{Deref, DerefMut};
 use quinn_proto::{Connection, ConnectionHandle, Event, StreamEvent, Transmit};

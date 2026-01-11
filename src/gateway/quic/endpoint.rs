@@ -1,10 +1,10 @@
-use crate::gateway::quic2::conn::ConnCtrl;
-use crate::gateway::quic2::packet::{
+use crate::gateway::quic::conn::ConnCtrl;
+use crate::gateway::quic::packet::{
     PacketPool, QuicPacket, QuicPacketMargins, QuicPacketRx, QuicPacketTx,
 };
-use crate::gateway::quic2::runner::{Runner};
-use crate::gateway::quic2::stream::{QuicStream, QuicStreamRx, QuicStreamTx};
-use crate::gateway::quic2::utils::switched_channel;
+use crate::gateway::quic::runner::{Runner};
+use crate::gateway::quic::stream::{QuicStream, QuicStreamRx, QuicStreamTx};
+use crate::gateway::quic::utils::switched_channel;
 use bytes::BytesMut;
 use dashmap::DashMap;
 use derive_more::Debug;
