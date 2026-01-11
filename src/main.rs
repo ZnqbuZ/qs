@@ -18,11 +18,11 @@ const CLIENT_ADDR: &str = "127.0.0.1:10000";
 const TEST1: bool = false;
 const PAYLOAD_SIZE_1: usize = 8192 * 1024 * 1024;
 
-const TEST2: bool = true;
+const TEST2: bool = false;
 const ITERATION_COUNT: usize = 100_000;
 
 const TEST3: bool = true;
-const STREAM_COUNT: usize = 4;
+const STREAM_COUNT: usize = 8;
 const PAYLOAD_SIZE_3: usize = 4096 * 1024 * 1024;
 
 #[tokio::main(flavor = "multi_thread")]

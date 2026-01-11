@@ -41,12 +41,14 @@ impl ConnState {
         )))
     }
 
-    pub(super) fn close(&mut self, id: StreamId) {
+    pub(super) fn close(&mut self, id: StreamId, reset: bool) {
         let _ = self.conn.recv_stream(id).stop(VarInt::from_u32(0));
         if let Some(waker) = self.readers.remove(&id) {
             waker.wake();
         }
-        let _ = self.conn.send_stream(id).reset(VarInt::from_u32(0));
+        if reset {
+            let _ = self.conn.send_stream(id).reset(VarInt::from_u32(0));
+        }
         if let Some(waker) = self.writers.remove(&id) {
             waker.wake();
         }

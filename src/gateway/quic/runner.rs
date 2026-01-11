@@ -83,7 +83,7 @@ impl Runner {
 
                 // 处理流关闭
                 while let Some(id) = self.ctrl.close.pop() {
-                    state.close(id);
+                    state.close(id, false);
                 }
 
                 // 驱动状态机 (处理握手、流开启等)
