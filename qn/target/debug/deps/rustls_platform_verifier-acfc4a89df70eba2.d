@@ -1,0 +1,8 @@
+D:\OneDrive - ZnqbuZ\repos\qs\qn\target\debug\deps\rustls_platform_verifier-acfc4a89df70eba2.d: C:\Users\LunaYao\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-platform-verifier-0.6.2\src\lib.rs C:\Users\LunaYao\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-platform-verifier-0.6.2\src\verification\mod.rs C:\Users\LunaYao\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-platform-verifier-0.6.2\src\verification\windows.rs C:\Users\LunaYao\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-platform-verifier-0.6.2\src\../README.md
+
+D:\OneDrive - ZnqbuZ\repos\qs\qn\target\debug\deps\librustls_platform_verifier-acfc4a89df70eba2.rmeta: C:\Users\LunaYao\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-platform-verifier-0.6.2\src\lib.rs C:\Users\LunaYao\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-platform-verifier-0.6.2\src\verification\mod.rs C:\Users\LunaYao\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-platform-verifier-0.6.2\src\verification\windows.rs C:\Users\LunaYao\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-platform-verifier-0.6.2\src\../README.md
+
+C:\Users\LunaYao\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-platform-verifier-0.6.2\src\lib.rs:
+C:\Users\LunaYao\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-platform-verifier-0.6.2\src\verification\mod.rs:
+C:\Users\LunaYao\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-platform-verifier-0.6.2\src\verification\windows.rs:
+C:\Users\LunaYao\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-platform-verifier-0.6.2\src\../README.md:
