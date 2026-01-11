@@ -66,9 +66,11 @@ impl Driver {
     async fn run(&mut self) {
         while let Some(mut guard) = self.rx.recv().await {
             self.tasks.spawn(async move {
-                match guard.runner.run().await {
-                    Ok(()) => trace!("Runner({:?}) exited normally", guard),
-                    Err(e) => error!("Runner({:?}) exited with error: {:?}", guard, e),
+                let res = guard.runner.run().await;
+                if let Err(e) = res
+                    && !guard.runner.shutdown.load(Ordering::Relaxed)
+                {
+                    error!("Runner exited with error: {:?}", e);
                 }
             });
         }

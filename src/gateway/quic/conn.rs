@@ -5,12 +5,11 @@ use quinn_proto::{Connection, ConnectionEvent, Dir, StreamId, VarInt};
 use std::collections::HashMap;
 use std::io::{Error, Result};
 use std::iter::chain;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use std::task::Waker;
 use std::time::Instant;
 use tokio::sync::{oneshot, Notify};
-use tokio::sync::oneshot::error::RecvError;
 
 #[derive(Debug)]
 pub(super) struct ConnState {
@@ -123,12 +122,12 @@ impl ConnCtrl {
         let id = rx.await.map_err(|e| Error::other(format!("Failed to receive stream ID from runner: {:?}", e)))??;
         Ok(QuicStream::new(id, self.clone()))
     }
-    
+
     pub(super) fn close(&self, id: StreamId) {
         self.close.push(id);
         self.notify.notify_one();
     }
-    
+
     pub(super) fn shutdown(&self) {
         self.shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
         self.notify.notify_one();

@@ -3,16 +3,12 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use quinn_proto::{FinishError, ReadError, ReadableError, StreamId, WriteError};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::sync::mpsc;
 use tracing::trace;
 use crate::gateway::quic::conn::{ConnCtrl, ConnState};
 use crate::gateway::quic::utils::{BufPool, SwitchedReceiver, SwitchedSender};
 
 pub(crate) type QuicStreamTx = SwitchedSender<QuicStream>;
 pub type QuicStreamRx = SwitchedReceiver<QuicStream>;
-
-pub(crate) type StreamDropTx = mpsc::Sender<StreamId>;
-pub(crate) type StreamDropRx = mpsc::Receiver<StreamId>;
 
 #[derive(Debug)]
 pub struct QuicStream {

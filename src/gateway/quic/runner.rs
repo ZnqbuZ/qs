@@ -1,6 +1,6 @@
 use crate::gateway::quic::conn::ConnCtrl;
 use crate::gateway::quic::endpoint::QuicOutputTx;
-use crate::gateway::quic::stream::{QuicStream, StreamDropRx};
+use crate::gateway::quic::stream::QuicStream;
 use crate::gateway::quic::utils::BufAcc;
 use crate::gateway::quic::QuicPacket;
 use derive_more::{Deref, DerefMut};
@@ -50,10 +50,6 @@ impl Runner {
         self.ctrl.notify.notify_one();
 
         loop {
-            if self.ctrl.shutdown.load(Ordering::Relaxed) {
-                return Ok(());
-            }
-
             let mut worked = false;
 
             // 2. --- 核心逻辑：处理状态机 ---
