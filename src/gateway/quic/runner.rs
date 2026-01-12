@@ -10,6 +10,7 @@ use std::io::{Error, ErrorKind};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 use tokio::select;
+use tokio::task::yield_now;
 use tokio::time::sleep;
 use tracing::error;
 
@@ -198,6 +199,8 @@ impl Runner {
                     }
                 }
             }
+
+            yield_now().await;
 
             // 5. --- 休眠等待 ---
             // 只有当这一轮什么都没干（没发包，没收包，没状态变更）时才睡觉

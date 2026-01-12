@@ -84,7 +84,8 @@ impl From<ConnState> for SharedConnState {
     }
 }
 
-type ConnEvtQueue = Arc<ArrayQueue<ConnectionEvent>>;
+// type ConnEvtQueue = Arc<ArrayQueue<ConnectionEvent>>;
+type ConnEvtQueue = Arc<SegQueue<ConnectionEvent>>;
 type StreamOpenQueue = Arc<SegQueue<(Dir, oneshot::Sender<Result<StreamId>>)>>;
 type StreamCloseQueue = Arc<SegQueue<StreamId>>;
 
@@ -104,7 +105,8 @@ impl ConnCtrl {
     pub(super) fn new(conn: Connection) -> Self {
         Self {
             state: ConnState::new(conn).into(),
-            inbox: ArrayQueue::new(QUIC_CONN_EVT_QUEUE_CAPACITY).into(),
+            // inbox: ArrayQueue::new(QUIC_CONN_EVT_QUEUE_CAPACITY).into(),
+            inbox: SegQueue::new().into(),
             open: SegQueue::new().into(),
             close: SegQueue::new().into(),
             notify: Arc::new(Notify::new()),

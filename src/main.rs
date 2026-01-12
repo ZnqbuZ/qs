@@ -22,8 +22,8 @@ const TEST2: bool = false;
 const ITERATION_COUNT: usize = 100_000;
 
 const TEST3: bool = true;
-const STREAM_COUNT: usize = 8;
-const PAYLOAD_SIZE_3: usize = 4096 * 1024 * 1024;
+const STREAM_COUNT: usize = 16;
+const PAYLOAD_SIZE_3: usize = 2048 * 1024 * 1024;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
@@ -81,50 +81,83 @@ async fn benchmark_throughput() {
     let c_arc = client.clone();
 
     // --- [修复 1] Network: Client -> Server ---
-    // 这个任务压力最大，必须 yield，否则会饿死 ACK 回传任务
+    // 改用 send_batch
     tokio::spawn(async move {
         let mut rx = client_packet_rx;
-        // 使用 limit 限制每次连续处理的包数量，避免单次占用时间过长
-        let mut count = 0;
-        while let Some(pkt) = rx.recv().await {
-            // 如果 send 返回 Err，说明 Server 已经关闭/崩溃，我们应该退出而不是 Panic
+        let mut batch = Vec::with_capacity(32);
+
+        loop {
+            // 1. 阻塞等待至少一个包
+            let pkt = match rx.recv().await {
+                Some(p) => p,
+                None => break,
+            };
+
+            // 修正地址：发送给 Server 的包，其“源地址”对 Server 来说是 Client
+            let mut p = pkt;
+            p.addr = CLIENT_ADDR.parse().unwrap();
+            batch.push(p);
+
+            // 2. 尝试获取更多包
+            for _ in 0..31 {
+                match rx.try_recv() {
+                    Ok(mut p) => {
+                        p.addr = CLIENT_ADDR.parse().unwrap();
+                        batch.push(p);
+                    }
+                    Err(_) => break,
+                }
+            }
+
+            // 3. 批量发送
             if s_arc
-                .send(CLIENT_ADDR.parse().unwrap(), pkt.payload)
+                .send_batch(batch.drain(..))
                 .await
                 .is_err()
             {
                 break;
             }
 
-            // 每转发 16 个包，强制让出一次 CPU
-            // 这给了 Server 处理包和生成 ACK 的机会，也给了另一个网络任务转发 ACK 的机会
-            count += 1;
-            if count >= 16 {
-                count = 0;
-                tokio::task::yield_now().await;
-            }
+            // 4. 让出 CPU
+            tokio::task::yield_now().await;
         }
     });
 
     // --- [修复 2] Network: Server -> Client ---
-    // 负责转发 ACK
+    // 改用 send_batch
     tokio::spawn(async move {
         let mut rx = server_packet_rx;
-        let mut count = 0;
-        while let Some(pkt) = rx.recv().await {
+        let mut batch = Vec::with_capacity(32);
+
+        loop {
+            let pkt = match rx.recv().await {
+                Some(p) => p,
+                None => break,
+            };
+
+            let mut p = pkt;
+            p.addr = SERVER_ADDR.parse().unwrap();
+            batch.push(p);
+
+            for _ in 0..31 {
+                match rx.try_recv() {
+                    Ok(mut p) => {
+                        p.addr = SERVER_ADDR.parse().unwrap();
+                        batch.push(p);
+                    }
+                    Err(_) => break,
+                }
+            }
+
             if c_arc
-                .send(SERVER_ADDR.parse().unwrap(), pkt.payload)
+                .send_batch(batch.drain(..))
                 .await
                 .is_err()
             {
                 break;
             }
-            // 同样加入 yield
-            count += 1;
-            if count >= 16 {
-                count = 0;
-                tokio::task::yield_now().await;
-            }
+
+            tokio::task::yield_now().await;
         }
     });
 
@@ -335,49 +368,77 @@ async fn benchmark_concurrent_throughput() {
     let s_arc = server.clone();
     let c_arc = client.clone();
 
-    // Client -> Server
+    // Client -> Server (Batch)
     tokio::spawn(async move {
         let mut rx = client_packet_rx;
-        // 使用 limit 限制每次连续处理的包数量，避免单次占用时间过长
-        let mut count = 0;
-        while let Some(pkt) = rx.recv().await {
-            // 如果 send 返回 Err，说明 Server 已经关闭/崩溃，我们应该退出而不是 Panic
+        let mut batch = Vec::with_capacity(32);
+
+        loop {
+            let pkt = match rx.recv().await {
+                Some(p) => p,
+                None => break,
+            };
+
+            let mut p = pkt;
+            p.addr = CLIENT_ADDR.parse().unwrap();
+            batch.push(p);
+
+            for _ in 0..31 {
+                match rx.try_recv() {
+                    Ok(mut p) => {
+                        p.addr = CLIENT_ADDR.parse().unwrap();
+                        batch.push(p);
+                    }
+                    Err(_) => break,
+                }
+            }
+
             if s_arc
-                .send(CLIENT_ADDR.parse().unwrap(), pkt.payload)
+                .send_batch(batch.drain(..))
                 .await
                 .is_err()
             {
                 break;
             }
 
-            // 每转发 16 个包，强制让出一次 CPU
-            // 这给了 Server 处理包和生成 ACK 的机会，也给了另一个网络任务转发 ACK 的机会
-            count += 1;
-            if count >= 16 {
-                count = 0;
-                tokio::task::yield_now().await;
-            }
+            tokio::task::yield_now().await;
         }
     });
 
-    // Server -> Client
+    // Server -> Client (Batch)
     tokio::spawn(async move {
         let mut rx = server_packet_rx;
-        let mut count = 0;
-        while let Some(pkt) = rx.recv().await {
+        let mut batch = Vec::with_capacity(32);
+
+        loop {
+            let pkt = match rx.recv().await {
+                Some(p) => p,
+                None => break,
+            };
+
+            let mut p = pkt;
+            p.addr = SERVER_ADDR.parse().unwrap();
+            batch.push(p);
+
+            for _ in 0..31 {
+                match rx.try_recv() {
+                    Ok(mut p) => {
+                        p.addr = SERVER_ADDR.parse().unwrap();
+                        batch.push(p);
+                    }
+                    Err(_) => break,
+                }
+            }
+
             if c_arc
-                .send(SERVER_ADDR.parse().unwrap(), pkt.payload)
+                .send_batch(batch.drain(..))
                 .await
                 .is_err()
             {
                 break;
             }
-            // 同样加入 yield
-            count += 1;
-            if count >= 16 {
-                count = 0;
-                tokio::task::yield_now().await;
-            }
+
+            tokio::task::yield_now().await;
         }
     });
 

@@ -24,6 +24,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tracing::{error, info, trace};
+use crate::gateway::quic::QuicPacket;
 
 type RunnerTx = mpsc::UnboundedSender<RunnerGuard>;
 type RunnerRx = mpsc::UnboundedReceiver<RunnerGuard>;
@@ -312,6 +313,105 @@ impl QuicEndpoint {
 
             None => Ok(()),
         }
+    }
+
+    // 提取 accept 逻辑，使其接受 &mut Endpoint，以便在持有锁时调用
+    fn accept_internal(
+        &self,
+        endpoint: &mut Endpoint,
+        incoming: Incoming,
+        buf: &mut Vec<u8>,
+    ) -> Result<Option<QuicPacket>> {
+        let addr = incoming.remote_address();
+        trace!("Incoming connection from {:?}", addr);
+        // buf 由调用者提供，以复用内存
+
+        let accept = endpoint.accept(incoming, Instant::now(), buf, None);
+        match accept {
+            Ok((hdl, conn)) => {
+                trace!("Accepted new connection({:?}) from {:?}", hdl, addr);
+                self.establish(hdl, conn)?;
+                Ok(None)
+            }
+            Err(AcceptError { cause, response }) => {
+                if let Some(transmit) = response {
+                    let packet = PACKET_POOL.with(|pool| {
+                        pool.borrow_mut()
+                            .pack_transmit(transmit, buf, self.output.packet.margins)
+                    });
+                    return Ok(Some(packet));
+                }
+                Err(Error::other(format!(
+                    "Failed to accept incoming connection: {:?}",
+                    cause
+                )))
+            }
+        }
+    }
+
+    // 新增：批量发送方法
+    pub async fn send_batch(&self, packets: impl IntoIterator<Item = QuicPacket>) -> Result<()> {
+        let mut responses = Vec::new();
+        let mut buf_guard = BufferGuard::new();
+        let buf = &mut buf_guard.0;
+        let mut notify = Vec::new();
+
+        // 作用域：持有 endpoint 锁
+        {
+            let mut endpoint = self.endpoint.lock();
+            let now = Instant::now();
+
+            for pkt in packets {
+                let event = endpoint.handle(now, pkt.addr, None, None, pkt.payload, buf);
+                match event {
+                    Some(DatagramEvent::NewConnection(incoming)) => {
+                        if !self.output.stream.switch().load(Ordering::Relaxed) {
+                            trace!("Incoming stream channel is closed. Connection dropped.");
+                            continue;
+                        }
+                        // 使用 internal 版本，复用锁和 buffer
+                        match self.accept_internal(&mut endpoint, incoming, buf) {
+                            Ok(Some(resp)) => responses.push(resp),
+                            Err(e) => error!("Failed to accept connection in batch: {:?}", e),
+                            _ => {}
+                        }
+                    }
+                    Some(DatagramEvent::ConnectionEvent(hdl, evt)) => {
+                        if let Some(ctrl) = self.ctrls.get(&hdl).map(|ctrl| ctrl.clone()) {
+                            let _ = ctrl.inbox.push(evt);
+                            notify.push(hdl);
+                        } else {
+                            trace!("Connection handle {:?} not found during batch send", hdl);
+                        }
+                    }
+                    Some(DatagramEvent::Response(transmit)) => {
+                        let packet = PACKET_POOL.with(|pool| {
+                            pool.borrow_mut()
+                                .pack_transmit(transmit, buf, self.output.packet.margins)
+                        });
+                        responses.push(packet);
+                    }
+                    None => {}
+                }
+            }
+        } // 锁释放
+
+        for hdl in notify {
+
+            if let Some(ctrl) = self.ctrls.get(&hdl).map(|ctrl| ctrl.clone()) {
+                ctrl.notify.notify_one();
+            }
+        }
+
+        // 异步发送所有响应包
+        for pkt in responses {
+            self.output
+                .packet
+                .send(pkt)
+                .await
+                .map_err(|e| Error::other(format!("Failed to send QUIC response: {:?}", e)))?;
+        }
+        Ok(())
     }
 }
 
