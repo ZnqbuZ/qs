@@ -101,6 +101,12 @@ impl QuicDriver {
             self.process_conn(conn_hdl); // 这里才真正调用 quinn 生成 UDP 包
         }
     }
+    pub fn is_congested(&self) -> bool {
+        self.net_evt_tx.capacity() < 50_000
+    }
+    pub fn has_dirty_conns(&self) -> bool {
+        !self.dirty_conns.is_empty()
+    }
 
     fn read_stream_from_quinn(conn: &mut Connection, id: StreamId, ctx: &mut QuicStreamDrvCtx) {
         // 如果还有积压数据没发出去，绝对不要读新的
@@ -593,6 +599,14 @@ impl QuicDriver {
 
         let now = Instant::now();
         loop {
+            // 1. 检查输出通道容量。如果满了，立即停止！
+            // 不要尝试获取包，否则 Quinn 认为包已发送，如果我们丢弃它，就需要等待 RTO 重传。
+            if self.net_evt_tx.capacity() == 0 {
+                // 通道已满，我们无法发送任何东西。
+                // 必须将此连接重新标记为 dirty，以便稍后（当通道有空位时）再次 process_conn。
+                self.mark_dirty(conn_hdl);
+                break;
+            }
             self.buf.clear();
             if let Some(transmit) = conn.poll_transmit(now, 1, &mut self.buf) {
                 if let Err(e) = emit_transmit!(self, transmit) {

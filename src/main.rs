@@ -245,7 +245,105 @@ async fn bench_concurrency(conn_count: usize) {
     println!("连接/流建立速率: {:.0} /s", conn_count as f64 / duration.as_secs_f64());
 }
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
+// --- 测试场景 4: 多流聚合带宽 (Aggregated Throughput) ---
+async fn bench_aggregated_throughput(total_size_mb: usize, stream_count: usize) {
+    info!("=== 开始测试: 多流聚合带宽 (总量: {} MB, 并发流数: {}) ===", total_size_mb, stream_count);
+    let mut env = setup_env().await;
+    let server_addr: SocketAddr = "127.0.0.1:5000".parse().unwrap();
+
+    let total_bytes = total_size_mb * 1024 * 1024;
+    // 确保总字节数能被流数量整除，方便计算
+    let bytes_per_stream = total_bytes / stream_count;
+    let payload_size = 32 * 1024; // 32KB chunks
+
+    // Server 端: 启动聚合接收任务
+    // 必须将 server_stream_rx 移动进去
+    let server_task = tokio::spawn(async move {
+        let mut join_set = tokio::task::JoinSet::new();
+        let mut total_received = 0;
+
+        // 期待接收 stream_count 个流
+        for _ in 0..stream_count {
+            if let Some(mut stream) = env.server_stream_rx.recv().await {
+                join_set.spawn(async move {
+                    stream.ready().await.expect("Server stream ready failed");
+                    let mut buf = vec![0u8; 64 * 1024]; // 64KB read buffer
+                    let mut stream_received = 0;
+                    while let Ok(n) = stream.read(&mut buf).await {
+                        if n == 0 { break; }
+                        stream_received += n;
+                    }
+                    stream_received
+                });
+            } else {
+                error!("Server stream channel closed unexpectedly");
+                break;
+            }
+        }
+
+        // 等待所有流接收完毕并汇总字节数
+        while let Some(res) = join_set.join_next().await {
+            total_received += res.unwrap();
+        }
+        total_received
+    });
+
+    // Client 端: 并发启动多个发送流
+    let start = Instant::now();
+    let mut client_set = tokio::task::JoinSet::new();
+    let data_chunk = Bytes::from(vec![0u8; payload_size]);
+
+    for i in 0..stream_count {
+        let ctrl = env.client_ctrl.clone();
+        let chunk = data_chunk.clone();
+
+        client_set.spawn(async move {
+            // 简单的连接重试逻辑（处理首个连接握手期间可能的竞争）
+            let mut stream = loop {
+                match ctrl.connect(server_addr, None, true).await {
+                    Ok(s) => break s,
+                    Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
+                }
+            };
+
+            let chunks_count = bytes_per_stream / payload_size;
+            let remainder = bytes_per_stream % payload_size;
+
+            for _ in 0..chunks_count {
+                stream.write_all(&chunk).await.expect("Write failed");
+            }
+            if remainder > 0 {
+                stream.write_all(&chunk[..remainder]).await.expect("Write remainder failed");
+            }
+            stream.shutdown().await.expect("Shutdown failed");
+        });
+
+        // 稍微让第一个连接先跑一下，触发 QUIC 握手，避免瞬间大量 Connect 指令把 Channel 塞满导致超时
+        if i == 0 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    // 等待服务端接收完所有数据（这是最准确的端到端时间）
+    let received_bytes = server_task.await.unwrap();
+    let duration = start.elapsed();
+
+    // 确保客户端任务也都干净退出了
+    while let Some(_) = client_set.join_next().await {}
+
+    let mb = received_bytes as f64 / 1024.0 / 1024.0;
+    let mb_per_sec = mb / duration.as_secs_f64();
+
+    println!("--------------------------------------------------");
+    println!("测试完成:");
+    println!("  并发流数: {}", stream_count);
+    println!("  总传输量: {} MB", mb as usize);
+    println!("  总耗时  : {:?}", duration);
+    println!("  聚合带宽: {:.2} MB/s  ({:.2} Gbps)", mb_per_sec, mb_per_sec * 8.0 / 1024.0);
+    println!("--------------------------------------------------");
+}
+
+#[tokio::main(flavor = "multi_thread")]
 async fn main() {
     let filter = if cfg!(debug_assertions) {
         // Debug 构建，打印所有 debug / trace
@@ -260,8 +358,10 @@ async fn main() {
         .with_env_filter(filter)
         .init();
 
+    bench_aggregated_throughput(8192, 12).await;
+
     // 1. 测带宽 (1GB 数据)
-    bench_throughput(512).await;
+    bench_throughput(1536).await;
 
     // 给系统一点喘息时间
     tokio::time::sleep(Duration::from_secs(2)).await;

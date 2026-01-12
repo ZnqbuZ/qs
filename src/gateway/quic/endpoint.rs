@@ -167,7 +167,7 @@ impl QuicEndpoint {
             cmd_tx: cmd_tx.clone(),
             incoming_stream_rx,
         };
-
+        let net_evt_tx_for_loop = net_evt_tx.clone();
         let mut drv = QuicDriver::new(
             self.endpoint.take().unwrap(),
             self.client_config.clone(),
@@ -199,7 +199,21 @@ impl QuicEndpoint {
                         drv.flush_io();
                     },
 
-                    Some(cmd) = cmd_rx.recv() => {
+                    // 2. [新增] 输出通道疏通事件
+                    // 只有当 Driver 还有未处理的脏连接（意味着上次 flush 因通道满而中断）时，
+                    // 我们才去等待输出通道的 permit。
+                    // 一旦获得 permit，说明有空位了，立即丢弃 permit 并再次尝试 flush_io。
+                    permit = net_evt_tx_for_loop.reserve(), if drv.has_dirty_conns() => {
+                        match permit {
+                            Ok(p) => {
+                                drop(p); // 只是为了唤醒，不需要真的发包
+                                drv.flush_io();
+                            },
+                            Err(_) => break, // Channel closed
+                        }
+                    },
+
+                    Some(cmd) = cmd_rx.recv(), if !drv.is_congested() => {
                         drv.execute(cmd);
                         // 贪婪消费 Commands (Write)
                         for _ in 0..100 {
