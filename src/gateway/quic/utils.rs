@@ -51,7 +51,7 @@ pub fn switched_channel<I>(size: usize) -> (SwitchedSender<I>, SwitchedReceiver<
     tagged_channel!(switch.clone(), size)
 }
 
-#[derive(Debug, Clone, Copy, From, Into)]
+#[derive(Debug, Default, Clone, Copy, From, Into)]
 pub struct BufMargins {
     pub header: usize,
     pub trailer: usize,
@@ -79,15 +79,16 @@ impl BufPool {
     }
 
     #[inline]
-    pub(super) fn buf(&mut self, data: &[u8], margins: BufMargins) -> BytesMut {
+    pub(super) fn buf(&mut self, data: &[u8], margins: Option<BufMargins>) -> BytesMut {
         self.buf_vectored(&[IoSlice::new(data)], margins).next().unwrap()
     }
 
     pub(super) fn buf_vectored<'t>(
         &mut self,
         data: &'t [IoSlice<'_>],
-        margins: BufMargins,
+        margins: Option<BufMargins>,
     ) -> impl Iterator<Item = BytesMut> + 't {
+        let margins = margins.unwrap_or_default();
         let mut len_iter = data.iter().map(|s| s.len());
         let len = margins.len() * data.len() + len_iter.clone().sum::<usize>();
 
@@ -112,8 +113,7 @@ impl BufPool {
         }
 
         iter::from_fn(move || {
-            let len = header + len_iter.next()? + trailer;
-            Some(buf.split_to(len))
+            Some(buf.split_to(header + len_iter.next()? + trailer))
         })
     }
 }
