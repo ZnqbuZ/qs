@@ -1,7 +1,10 @@
-use bytes::BytesMut;
+use bytes::{BufMut, BytesMut};
 use derive_more::{Deref, DerefMut, From, Into};
 use std::cmp::max;
+use std::io::IoSlice;
+use std::iter;
 use std::mem::ManuallyDrop;
+use std::ptr::copy_nonoverlapping;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -75,21 +78,43 @@ impl BufPool {
         }
     }
 
+    #[inline]
     pub(super) fn buf(&mut self, data: &[u8], margins: BufMargins) -> BytesMut {
-        let len = margins.len() + data.len();
+        self.buf_vectored(&[IoSlice::new(data)], margins).next().unwrap()
+    }
+
+    pub(super) fn buf_vectored<'t>(
+        &mut self,
+        data: &'t [IoSlice<'_>],
+        margins: BufMargins,
+    ) -> impl Iterator<Item = BytesMut> + 't {
+        let mut len_iter = data.iter().map(|s| s.len());
+        let len = margins.len() * data.len() + len_iter.clone().sum::<usize>();
 
         if len > self.pool.capacity() {
-            let additional = max(len * 4, self.min_capacity);
+            let additional = max(len * 2, self.min_capacity);
             self.pool.reserve(additional);
             unsafe {
                 self.pool.set_len(self.pool.capacity());
             }
         }
 
-        let mut buf = self.pool.split_to(len);
         let (header, trailer) = margins.into();
-        buf[header..len - trailer].copy_from_slice(data);
-        buf
+        let mut buf = self.pool.split_to(len);
+        unsafe {
+            buf.set_len(0);
+            for data in data {
+                buf.advance_mut(header);
+                let len = data.len();
+                copy_nonoverlapping(data.as_ptr(), buf.chunk_mut().as_mut_ptr(), len);
+                buf.advance_mut(len + trailer)
+            }
+        }
+
+        iter::from_fn(move || {
+            let len = header + len_iter.next()? + trailer;
+            Some(buf.split_to(len))
+        })
     }
 }
 
