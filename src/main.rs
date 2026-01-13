@@ -23,7 +23,7 @@ const ITERATION_COUNT: usize = 100_000;
 
 const TEST3: bool = true;
 const STREAM_COUNT: usize = 16;
-const PAYLOAD_SIZE_3: usize = 2048 * 1024 * 1024;
+const PAYLOAD_SIZE_3: usize = 4096 * 1024 * 1024;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
