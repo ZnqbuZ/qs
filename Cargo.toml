@@ -17,6 +17,7 @@ dashmap = "7.0.0-rc2"
 crossbeam = "0.8.4"
 rtrb = "0.3.2"
 futures = "0.3.31"
+smallvec = "2.0.0-alpha.12"
 
 [profile.release]
 debug = true  # 关键！保留函数名符号，但不影响优化等级
