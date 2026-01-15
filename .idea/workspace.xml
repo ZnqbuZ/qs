@@ -23,9 +23,13 @@
     </cargoProject>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="ec1f0d40-3ac5-4f78-ac6d-97b72ebc55d6" name="更改" comment="add batch processing, adjust some param for benchmark">
+    <list default="true" id="ec1f0d40-3ac5-4f78-ac6d-97b72ebc55d6" name="更改" comment="ring buffer">
+      <change afterPath="$PROJECT_DIR$/src/socket.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/socket_new.rs" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/gateway/quic/endpoint.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/gateway/quic/endpoint.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Cargo.lock" beforeDir="false" afterPath="$PROJECT_DIR$/Cargo.lock" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/Cargo.toml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/profile.json.gz" beforeDir="false" afterPath="$PROJECT_DIR$/profile.json.gz" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/main.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/main.rs" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -37,10 +41,10 @@
     <option name="formatViaClangd" value="false" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="23" />
+    <option name="cachedIndexableFilesCount" value="28" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
-  <component name="ExecutionTargetManager" SELECTED_TARGET="RsBuildProfile:release" />
+  <component name="ExecutionTargetManager" SELECTED_TARGET="RsBuildProfile:dev" />
   <component name="FileTemplateManagerImpl">
     <option name="RECENT_TEMPLATES">
       <list>
@@ -89,6 +93,14 @@
     "Cargo.Run qn (1).executor": "Run",
     "Cargo.Run qn.executor": "Run",
     "Cargo.Run qs.executor": "Run",
+    "Cargo.Test socket::tests::test_bandwidth.executor": "Run",
+    "Cargo.Test socket::tests::test_bandwidth_parallel.executor": "Run",
+    "Cargo.Test socket::tests::test_bandwidth_throughput (1).executor": "Run",
+    "Cargo.Test socket::tests::test_bandwidth_throughput.executor": "Run",
+    "Cargo.Test socket::tests::test_multi_stream_parallel.executor": "Run",
+    "Cargo.Test socket::tests::test_ping.executor": "Run",
+    "Cargo.Test socket::tests::test_quic_socket_integration.executor": "Run",
+    "Cargo.Test socket::tests::test_raw_socket_communication.executor": "Debug",
     "ModuleVcsDetector.initialDetectionPerformed": "true",
     "RunOnceActivity.MCP Project settings loaded": "true",
     "RunOnceActivity.RadMigrateCodeStyle": "true",
@@ -100,7 +112,7 @@
     "RunOnceActivity.typescript.service.memoryLimit.init": "true",
     "cf.first.check.clang-format": "false",
     "cidr.known.project.marker": "true",
-    "git-widget-placeholder": "mutex-new",
+    "git-widget-placeholder": "abstract-socket",
     "node.js.detected.package.eslint": "true",
     "node.js.detected.package.tslint": "true",
     "node.js.selected.package.eslint": "(autodetect)",
@@ -108,7 +120,7 @@
     "nodejs_package_manager_path": "npm",
     "org.rust.cargo.project.model.PROJECT_DISCOVERY": "true",
     "run.code.analysis.last.selected.profile": "pProject Default",
-    "settings.editor.selected.configurable": "preferences.lookFeel",
+    "settings.editor.selected.configurable": "preferences.pluginManager",
     "vue.rearranger.settings.migration": "true"
   }
 }]]></component>
@@ -121,14 +133,12 @@
   <component name="RsExternalLinterProjectSettings">
     <option name="tool" value="Clippy" />
   </component>
-  <component name="RunManager">
-    <configuration name="Run qs" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
+  <component name="RunManager" selected="Cargo.Run qs">
+    <configuration name="Run qs" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
       <option name="buildProfileId" value="release" />
       <option name="command" value="run --package qs --bin qs" />
       <option name="workingDirectory" value="file://$PROJECT_DIR$" />
-      <envs>
-        <env name="RUST_BACKTRACE" value="1 RUSTFLAGS=--cfg tokio_unstable" />
-      </envs>
+      <envs />
       <option name="emulateTerminal" value="true" />
       <option name="channel" value="DEFAULT" />
       <option name="requiredFeatures" value="true" />
@@ -142,13 +152,11 @@
         <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
       </method>
     </configuration>
-    <configuration name="Run qs" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
+    <configuration name="Test socket::tests::test_bandwidth" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
       <option name="buildProfileId" value="release" />
-      <option name="command" value="run --package qs --bin qs" />
+      <option name="command" value="test --release --package qs --bin qs socket::tests::test_bandwidth -- --exact --nocapture" />
       <option name="workingDirectory" value="file://$PROJECT_DIR$" />
-      <envs>
-        <env name="RUST_BACKTRACE" value="1 RUSTFLAGS=--cfg tokio_unstable" />
-      </envs>
+      <envs />
       <option name="emulateTerminal" value="true" />
       <option name="channel" value="DEFAULT" />
       <option name="requiredFeatures" value="true" />
@@ -162,10 +170,50 @@
         <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
       </method>
     </configuration>
+    <configuration name="Test socket::tests::test_bandwidth_parallel" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+      <option name="command" value="test --release --package qs --bin qs socket::tests::test_bandwidth_parallel -- --exact --nocapture" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="Test socket::tests::test_ping" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
+      <option name="command" value="test --package qs --bin qs socket::tests::test_ping -- --exact" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <list>
+      <item itemvalue="Cargo.Run qs" />
+      <item itemvalue="Cargo.Test socket::tests::test_bandwidth_parallel" />
+      <item itemvalue="Cargo.Test socket::tests::test_bandwidth" />
+      <item itemvalue="Cargo.Test socket::tests::test_ping" />
+    </list>
     <recent_temporary>
       <list>
-        <item itemvalue="Cargo.Run qs" />
-        <item itemvalue="Cargo.Run qs" />
+        <item itemvalue="Cargo.Test socket::tests::test_bandwidth" />
+        <item itemvalue="Cargo.Test socket::tests::test_ping" />
       </list>
     </recent_temporary>
   </component>
@@ -187,6 +235,9 @@
       <workItem from="1768136606815" duration="34271000" />
       <workItem from="1768262827960" duration="1036000" />
       <workItem from="1768309273567" duration="2089000" />
+      <workItem from="1768411871263" duration="4762000" />
+      <workItem from="1768429496578" duration="1818000" />
+      <workItem from="1768481182513" duration="4488000" />
     </task>
     <task id="LOCAL-00001" summary="Refactor QUIC module structure and improve performance benchmarks">
       <option name="closed" value="true" />

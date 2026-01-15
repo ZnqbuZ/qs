@@ -1,4 +1,6 @@
 mod gateway;
+mod socket;
+mod socket_new;
 
 // 假设你的库名为 my_quic_lib，且相关模块是公开的
 // 如果是在同一个 crate 内部测试，使用 crate::gateway::quic...
@@ -15,13 +17,13 @@ use tracing_subscriber::EnvFilter;
 const SERVER_ADDR: &str = "127.0.0.1:4433";
 const CLIENT_ADDR: &str = "127.0.0.1:10000";
 
-const TEST1: bool = false;
+const TEST1: bool = true;
 const PAYLOAD_SIZE_1: usize = 8192 * 1024 * 1024;
 
 const TEST2: bool = false;
 const ITERATION_COUNT: usize = 100_000;
 
-const TEST3: bool = true;
+const TEST3: bool = false;
 const STREAM_COUNT: usize = 16;
 const PAYLOAD_SIZE_3: usize = 4096 * 1024 * 1024;
 
