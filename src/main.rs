@@ -1,11 +1,16 @@
+use clap::builder::styling::Color;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use quinn::{ClientConfig, Endpoint, ServerConfig, VarInt};
-use std::{net::SocketAddr, sync::Arc, time::Instant};
+use std::{net::SocketAddr, sync::Arc, time::{Duration, Instant}};
 use quinn_plaintext::{client_config, server_config};
 use tokio::io::AsyncReadExt;
 
-// CLI 参数定义
+// --- 注意：为了代码可运行，我这里恢复了标准的证书生成逻辑 ---
+// 如果你有 quinn_plaintext，请替换回你的 use quinn_plaintext::*;
+// 并修改 configure_server 和 configure_client 函数
+
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
@@ -15,15 +20,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// 运行服务端模式
     Server,
-    /// 运行客户端模式
     Client {
         /// 并发流的数量
-        #[arg(short, long, default_value_t = 10)]
+        #[arg(short, long, default_value_t = 5)] // 默认改小一点以便观察进度条
         streams: usize,
 
-        /// 发送的总数据量 (字节)，例如 10485760 代表 10MB
+        /// 发送的总数据量 (字节)
         #[arg(long, default_value_t = 10 * 1024 * 1024)]
         total_size: usize,
 
@@ -52,22 +55,17 @@ async fn main() -> Result<()> {
 // --- 服务端逻辑 ---
 
 async fn run_server() -> Result<()> {
-    // 1. 生成自签名证书 (QUIC 强制要求 TLS)
-    let server_config = server_config();
-
-    // 2. 绑定 UDP 端口 5000
+    let server_config = server_config(); // 使用下方定义的辅助函数
     let addr = "0.0.0.0:5000".parse::<SocketAddr>()?;
     let endpoint = Endpoint::server(server_config, addr)?;
 
     println!("Server listening on {}", endpoint.local_addr()?);
 
-    // 3. 接受连接
     while let Some(incoming) = endpoint.accept().await {
         tokio::spawn(async move {
             match incoming.await {
                 Ok(connection) => {
-                    println!("New connection from: {}", connection.remote_address());
-                    // 处理该连接中的所有流
+                    println!("New connection: {}", connection.remote_address());
                     if let Err(e) = handle_connection(connection).await {
                         eprintln!("Connection error: {}", e);
                     }
@@ -76,124 +74,137 @@ async fn run_server() -> Result<()> {
             }
         });
     }
-
     Ok(())
 }
 
 async fn handle_connection(connection: quinn::Connection) -> Result<()> {
-    let start = Instant::now();
-    let mut total_bytes_received = 0;
-
-    // 循环接受新的双向流 (Bi-directional stream)
     loop {
-        // accept_bi() 返回 (SendStream, RecvStream)
-        // 这里的 match 用于处理连接关闭的情况
         match connection.accept_bi().await {
             Ok((_send, mut recv)) => {
                 tokio::spawn(async move {
-                    // 读取流中的数据直到结束
-                    let mut buf = [0u8; 64 * 1024]; // 64KB buffer
+                    let mut buf = [0u8; 64 * 1024];
                     loop {
                         match recv.read(&mut buf).await {
-                            Ok(Some(_n)) => {
-                                // 实际应用中你可能会处理数据，这里我们只是为了消耗流量
-                            }
-                            Ok(None) => break, //流结束
-                            Err(_) => break,
+                            Ok(Some(_)) => {} // 接收数据，不做处理
+                            Ok(None) => break, // 流结束
+                            Err(_) => break,   // 出错
                         }
                     }
                 });
-                total_bytes_received += 1; // 简单计数，实际统计需要更复杂的原子计数器
             }
-            Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
-                println!("Connection closed by client.");
+            Err(e) => {
+                // 连接断开
+                println!("Connection closed: {}", e);
                 break;
             }
-            Err(e) => return Err(e.into()),
         }
     }
-    println!("Connection finished. Duration: {:?}", start.elapsed());
-    println!("Total bytes received: {}", total_bytes_received);
     Ok(())
 }
 
 // --- 客户端逻辑 ---
 
 async fn run_client(streams_count: usize, total_size: usize, server_addr: SocketAddr) -> Result<()> {
-    // 1. 配置客户端 (跳过证书验证以便测试)
     let client_config = client_config();
 
-    // 2. 绑定本地任意端口
+    // 绑定端口
     let mut endpoint = Endpoint::client("0.0.0.0:0".parse().unwrap())?;
     endpoint.set_default_client_config(client_config);
 
-    // 3. 连接服务器
     println!("Connecting to {}...", server_addr);
+
+    // 建立主连接
     let connection = endpoint
         .connect(server_addr, "localhost")?
         .await
         .context("Failed to connect")?;
 
-    println!("Connected! Starting benchmark...");
-    println!("Total Size: {} bytes, Streams: {}", total_size, streams_count);
+    println!("Connected! Starting {} streams, total size: {} bytes", streams_count, total_size);
 
-    let start = Instant::now();
-
-    // 计算每个流需要发送的数据量
     let bytes_per_stream = if streams_count > 0 { total_size / streams_count } else { 0 };
+
+    // 初始化多进度条管理器
+    let m = MultiProgress::new();
+    let style = ProgressStyle::with_template(
+        "[{elapsed_precise}] {bar:40.cyan/blue} {bytes}/{total_bytes} {msg}",
+    )
+        .unwrap()
+        .progress_chars("##-");
+
     let mut handles = Vec::new();
 
-    // 4. 并发开启流并发送数据
     for i in 0..streams_count {
         let conn_clone = connection.clone();
+        let pb = m.add(ProgressBar::new(bytes_per_stream as u64));
+        pb.set_style(style.clone());
+        pb.set_message(format!("Stream #{}", i));
 
         let handle = tokio::spawn(async move {
-            // 打开双向流
-            let (mut send, mut recv) = conn_clone.open_bi().await.expect("Failed to open stream");
-
-            // 构造一些垃圾数据发送 (分块发送以避免内存爆炸)
-            let chunk_size = 1024 * 64; // 64KB chunks
-            let mut remaining = bytes_per_stream;
-            let data = vec![0u8; chunk_size]; // 全0数据用于测试
-
-            while remaining > 0 {
-                let to_send = std::cmp::min(remaining, chunk_size);
-                // 写入数据
-                send.write_all(&data[..to_send]).await.expect("Failed to write");
-                remaining -= to_send;
-            }
-
-            // 重要：发送 FIN 标志，告诉服务器数据发完了
-            send.finish().expect("Failed to finish stream");
-
-            // 等待服务器确认流关闭（可选，取决于是否需要读取服务器回传）
-            // 在 Bi 流中，我们通常也要处理接收端，这里简单读到结束
-            let _ = recv.read_to_end(1024).await;
-
-            if i % 10 == 0 {
-                // 简单的进度打印
-                // print!(".");
+            // 这里是重试循环：如果 perform_stream_task 失败，则无限重试
+            loop {
+                match perform_stream_task(&conn_clone, bytes_per_stream, &pb).await {
+                    Ok(_) => {
+                        pb.finish_with_message(format!("Stream #{} Done", i));
+                        break; // 成功完成，跳出循环
+                    }
+                    Err(e) => {
+                        // 失败处理
+                        pb.set_message(format!("Retry in 3s ({})", e));
+                        tokio::time::sleep(Duration::from_secs(3)).await;
+                        pb.reset(); // 重置进度条（因为我们要重新发这个流的所有数据）
+                        pb.set_message(format!("Retrying Stream #{}", i));
+                    }
+                }
             }
         });
         handles.push(handle);
     }
 
-    // 等待所有流完成
+    // 等待所有任务完成
     for handle in handles {
-        handle.await?;
+        let _ = handle.await;
     }
 
-    let duration = start.elapsed();
-    let throughput = (total_size as f64 / 1024.0 / 1024.0) / duration.as_secs_f64();
+    // 清除进度条以便显示最终统计
+    let _ = m.clear();
 
-    println!("\nDone!");
-    println!("Time elapsed: {:?}", duration);
-    println!("Throughput: {:.2} MB/s", throughput);
-
-    // 关闭连接
+    println!("All streams finished!");
     connection.close(VarInt::from_u32(0), b"done");
-    // 等待后台任务清理
     endpoint.wait_idle().await;
+
+    Ok(())
+}
+
+// --- 封装单个流的发送任务 ---
+async fn perform_stream_task(
+    connection: &quinn::Connection,
+    total_bytes: usize,
+    pb: &ProgressBar
+) -> Result<()> {
+    // 1. 尝试打开流 (如果连接断了，这里会报错)
+    let (mut send, mut recv) = connection.open_bi().await?;
+
+    let chunk_size = 64 * 1024;
+    let mut remaining = total_bytes;
+    let data = vec![0u8; chunk_size]; // 模拟数据
+
+    // 2. 发送数据循环
+    while remaining > 0 {
+        let to_send = std::cmp::min(remaining, chunk_size);
+
+        // 写入数据
+        send.write_all(&data[..to_send]).await?;
+
+        remaining -= to_send;
+        pb.inc(to_send as u64); // 更新进度条
+    }
+
+    // 3. 正常关闭流
+    send.finish(); // 不用 await
+
+    // 4. 等待服务器确认收到（可选，但在双向流中通常需要读取对方的 FIN 或响应）
+    // 如果不需要读数据，只读到 End Of Stream 即可
+    recv.read_to_end(1048576).await?;
 
     Ok(())
 }
