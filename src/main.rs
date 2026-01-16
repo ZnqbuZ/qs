@@ -1,15 +1,10 @@
-use clap::builder::styling::Color;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use quinn::{ClientConfig, Endpoint, ServerConfig, VarInt};
-use std::{net::SocketAddr, sync::Arc, time::{Duration, Instant}};
+use quinn::{Endpoint, VarInt};
+use std::{net::SocketAddr, time::{Duration, Instant}};
 use quinn_plaintext::{client_config, server_config};
-use tokio::io::AsyncReadExt;
-
-// --- 注意：为了代码可运行，我这里恢复了标准的证书生成逻辑 ---
-// 如果你有 quinn_plaintext，请替换回你的 use quinn_plaintext::*;
-// 并修改 configure_server 和 configure_client 函数
+use tokio::io::{AsyncReadExt, AsyncWriteExt}; // 补充：write_all 需要这个 trait
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -23,7 +18,7 @@ enum Commands {
     Server,
     Client {
         /// 并发流的数量
-        #[arg(short, long, default_value_t = 5)] // 默认改小一点以便观察进度条
+        #[arg(short, long, default_value_t = 5)]
         streams: usize,
 
         /// 发送的总数据量 (字节)
@@ -52,10 +47,10 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-// --- 服务端逻辑 ---
+// --- 服务端逻辑 (保持不变) ---
 
 async fn run_server() -> Result<()> {
-    let server_config = server_config(); // 使用下方定义的辅助函数
+    let server_config = server_config();
     let addr = "0.0.0.0:5000".parse::<SocketAddr>()?;
     let endpoint = Endpoint::server(server_config, addr)?;
 
@@ -85,15 +80,14 @@ async fn handle_connection(connection: quinn::Connection) -> Result<()> {
                     let mut buf = [0u8; 64 * 1024];
                     loop {
                         match recv.read(&mut buf).await {
-                            Ok(Some(_)) => {} // 接收数据，不做处理
-                            Ok(None) => break, // 流结束
-                            Err(_) => break,   // 出错
+                            Ok(Some(_)) => {}
+                            Ok(None) => break,
+                            Err(_) => break,
                         }
                     }
                 });
             }
             Err(e) => {
-                // 连接断开
                 println!("Connection closed: {}", e);
                 break;
             }
@@ -102,18 +96,16 @@ async fn handle_connection(connection: quinn::Connection) -> Result<()> {
     Ok(())
 }
 
-// --- 客户端逻辑 ---
+// --- 客户端逻辑 (已修改) ---
 
 async fn run_client(streams_count: usize, total_size: usize, server_addr: SocketAddr) -> Result<()> {
     let client_config = client_config();
 
-    // 绑定端口
     let mut endpoint = Endpoint::client("0.0.0.0:0".parse().unwrap())?;
     endpoint.set_default_client_config(client_config);
 
     println!("Connecting to {}...", server_addr);
 
-    // 建立主连接
     let connection = endpoint
         .connect(server_addr, "localhost")?
         .await
@@ -121,12 +113,17 @@ async fn run_client(streams_count: usize, total_size: usize, server_addr: Socket
 
     println!("Connected! Starting {} streams, total size: {} bytes", streams_count, total_size);
 
+    // 1. 开始计时
+    let start_time = Instant::now();
+
     let bytes_per_stream = if streams_count > 0 { total_size / streams_count } else { 0 };
 
-    // 初始化多进度条管理器
     let m = MultiProgress::new();
+
+    // 2. 修改样式：增加 {binary_bytes_per_sec} 显示带宽
+    // 格式解释: [耗时] 进度条 字节/总字节 (速度, 预计剩余时间) 消息
     let style = ProgressStyle::with_template(
-        "[{elapsed_precise}] {bar:40.cyan/blue} {bytes}/{total_bytes} {msg}",
+        "[{elapsed_precise}] {bar:40.cyan/blue} {bytes}/{total_bytes} ({binary_bytes_per_sec}, {eta}) {msg}",
     )
         .unwrap()
         .progress_chars("##-");
@@ -140,18 +137,16 @@ async fn run_client(streams_count: usize, total_size: usize, server_addr: Socket
         pb.set_message(format!("Stream #{}", i));
 
         let handle = tokio::spawn(async move {
-            // 这里是重试循环：如果 perform_stream_task 失败，则无限重试
             loop {
                 match perform_stream_task(&conn_clone, bytes_per_stream, &pb).await {
                     Ok(_) => {
                         pb.finish_with_message(format!("Stream #{} Done", i));
-                        break; // 成功完成，跳出循环
+                        break;
                     }
                     Err(e) => {
-                        // 失败处理
                         pb.set_message(format!("Retry in 3s ({})", e));
                         tokio::time::sleep(Duration::from_secs(3)).await;
-                        pb.reset(); // 重置进度条（因为我们要重新发这个流的所有数据）
+                        pb.reset();
                         pb.set_message(format!("Retrying Stream #{}", i));
                     }
                 }
@@ -160,50 +155,53 @@ async fn run_client(streams_count: usize, total_size: usize, server_addr: Socket
         handles.push(handle);
     }
 
-    // 等待所有任务完成
     for handle in handles {
         let _ = handle.await;
     }
 
-    // 清除进度条以便显示最终统计
-    let _ = m.clear();
+    // 3. 删除 m.clear()，保留进度条在屏幕上
+    // let _ = m.clear(); <--- 已删除
 
-    println!("All streams finished!");
+    // 4. 计算并显示总统计信息
+    let duration = start_time.elapsed();
+    let total_mb = total_size as f64 / 1024.0 / 1024.0;
+    let duration_secs = duration.as_secs_f64();
+    let throughput_mb_s = total_mb / duration_secs;
+
+    println!("\n================ SUMMARY ================");
+    println!("Total Streams : {}", streams_count);
+    println!("Total Data    : {:.2} MiB", total_mb);
+    println!("Time Elapsed  : {:.2?}", duration);
+    println!("Avg Throughput: {:.2} MiB/s", throughput_mb_s);
+    println!("=========================================");
+
     connection.close(VarInt::from_u32(0), b"done");
     endpoint.wait_idle().await;
 
     Ok(())
 }
 
-// --- 封装单个流的发送任务 ---
+// --- 封装单个流的发送任务 (保持你要求的原样) ---
 async fn perform_stream_task(
     connection: &quinn::Connection,
     total_bytes: usize,
     pb: &ProgressBar
 ) -> Result<()> {
-    // 1. 尝试打开流 (如果连接断了，这里会报错)
     let (mut send, mut recv) = connection.open_bi().await?;
 
     let chunk_size = 64 * 1024;
     let mut remaining = total_bytes;
-    let data = vec![0u8; chunk_size]; // 模拟数据
+    let data = vec![0u8; chunk_size];
 
-    // 2. 发送数据循环
     while remaining > 0 {
         let to_send = std::cmp::min(remaining, chunk_size);
-
-        // 写入数据
         send.write_all(&data[..to_send]).await?;
-
         remaining -= to_send;
-        pb.inc(to_send as u64); // 更新进度条
+        pb.inc(to_send as u64);
     }
 
-    // 3. 正常关闭流
-    send.finish(); // 不用 await
-
-    // 4. 等待服务器确认收到（可选，但在双向流中通常需要读取对方的 FIN 或响应）
-    // 如果不需要读数据，只读到 End Of Stream 即可
+    // 保持你要求的写法
+    send.finish();
     recv.read_to_end(1048576).await?;
 
     Ok(())
