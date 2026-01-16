@@ -4,7 +4,9 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use quinn::{Endpoint, VarInt};
 use std::{net::SocketAddr, time::{Duration, Instant}};
 use quinn_plaintext::{client_config, server_config};
-use tokio::io::{AsyncReadExt, AsyncWriteExt}; // 补充：write_all 需要这个 trait
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use qs::transport_config;
+// 补充：write_all 需要这个 trait
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]

@@ -1,11 +1,10 @@
-use quinn_plaintext::server_config;
-use quinn_plaintext::client_config;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use std::{net::SocketAddr, sync::Arc};
-use std::thread::spawn;
-use tokio::io::{join, AsyncReadExt, AsyncWriteExt};
 use qs::transport_config;
+use quinn_plaintext::client_config;
+use quinn_plaintext::server_config;
+use std::net::SocketAddr;
+use tokio::io::join;
 
 // 定义 CLI 结构
 #[derive(Parser)]
@@ -75,7 +74,7 @@ async fn run_server(addr: SocketAddr) -> Result<()> {
             };
 
             // 4. 处理该连接中的流
-            while let Ok((mut send_stream, mut recv_stream)) = connection.accept_bi().await {
+            while let Ok((send_stream, mut recv_stream)) = connection.accept_bi().await {
                 tokio::spawn(async move {
                     // 读取协议头：目标地址长度 (u16)
                     let mut len_buf = [0u8; 2];
@@ -96,16 +95,16 @@ async fn run_server(addr: SocketAddr) -> Result<()> {
                     // 连接目标 TCP
                     match tokio::net::TcpStream::connect(&target_str).await {
                         Ok(mut tcp_stream) => {
-                            if let Err(e) = tcp_stream.set_nodelay(true) {
-                                eprintln!("  ! 警告: 无法设置 TCP_NODELAY: {}", e);
-                            }
+                            // if let Err(e) = tcp_stream.set_nodelay(true) {
+                            //     eprintln!("  ! 警告: 无法设置 TCP_NODELAY: {}", e);
+                            // }
 
                             // 双向拷贝数据
                             // split TCP stream to use allow separate read/write in copy_bidirectional
                             let mut quic_stream = join(recv_stream, send_stream);
 
                             // 代理数据：TCP <-> QUIC
-                            tokio::io::copy_bidirectional(
+                            let _ = tokio::io::copy_bidirectional(
                                 &mut tcp_stream,
                                 &mut quic_stream
                             ).await;
@@ -151,9 +150,9 @@ async fn run_client(server_addr: SocketAddr, local_addr: SocketAddr, target: Str
 
     loop {
         let (mut socket, _) = listener.accept().await?;
-        if let Err(e) = socket.set_nodelay(true) {
-            eprintln!("无法设置本地 TCP_NODELAY: {}", e);
-        }
+        // if let Err(e) = socket.set_nodelay(true) {
+        //     eprintln!("无法设置本地 TCP_NODELAY: {}", e);
+        // }
 
         let connection = connection.clone();
         let target = target.clone();
@@ -161,7 +160,7 @@ async fn run_client(server_addr: SocketAddr, local_addr: SocketAddr, target: Str
         tokio::spawn(async move {
             // 4. 为每个 TCP 连接打开一个新的 QUIC 流
             match connection.open_bi().await {
-                Ok((mut send_stream, mut recv_stream)) => {
+                Ok((mut send_stream, recv_stream)) => {
                     // 发送自定义协议头: [len(u16)][address_bytes]
                     let target_bytes = target.as_bytes();
                     let len = target_bytes.len() as u16;
@@ -178,7 +177,7 @@ async fn run_client(server_addr: SocketAddr, local_addr: SocketAddr, target: Str
                     // 5. 进行双向转发
                     let mut quic_stream = join(recv_stream, send_stream);
 
-                    tokio::io::copy_bidirectional(
+                    let _ = tokio::io::copy_bidirectional(
                         &mut socket,
                         &mut quic_stream,
                     ).await;
