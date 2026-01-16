@@ -1,9 +1,12 @@
+use quinn::congestion::BbrConfig;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use quinn::{Endpoint, VarInt};
 use std::{net::SocketAddr, time::{Duration, Instant}};
+use std::sync::Arc;
 use quinn_plaintext::{client_config, server_config};
+use quinn_proto::TransportConfig;
 use tokio::io::{AsyncReadExt, AsyncWriteExt}; // 补充：write_all 需要这个 trait
 
 #[derive(Parser)]
@@ -22,7 +25,7 @@ enum Commands {
         streams: usize,
 
         /// 发送的总数据量 (字节)
-        #[arg(long, default_value_t = 10 * 1024 * 1024)]
+        #[arg(long, default_value_t = 32)]
         total_size: usize,
 
         /// 服务器地址
@@ -41,16 +44,43 @@ async fn main() -> Result<()> {
             streams,
             total_size,
             addr,
-        } => run_client(streams, total_size, addr).await?,
+        } => run_client(streams, total_size * 1048576, addr).await?,
     }
 
     Ok(())
 }
 
+fn transport_config() -> Arc<TransportConfig> {
+
+    let mut transport_config = TransportConfig::default();
+
+    // TODO: subject to change
+    transport_config.stream_receive_window(VarInt::from_u32(64 * 1024 * 1024));
+    transport_config.receive_window(VarInt::from_u32(1024 * 1024 * 1024));
+    transport_config.send_window(1024 * 1024 * 1024);
+
+    transport_config.max_concurrent_bidi_streams(VarInt::from_u32(1024));
+    transport_config.max_concurrent_uni_streams(VarInt::from_u32(0));
+
+    transport_config.datagram_receive_buffer_size(None);
+
+    transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
+    transport_config.max_idle_timeout(Some(VarInt::from_u32(30_000).into()));
+
+    transport_config.initial_mtu(1200);
+    transport_config.min_mtu(1200);
+
+    transport_config.congestion_controller_factory(Arc::new(BbrConfig::default()));
+
+    Arc::new(transport_config)
+}
+
 // --- 服务端逻辑 (保持不变) ---
 
 async fn run_server() -> Result<()> {
-    let server_config = server_config();
+    let mut server_config = server_config();
+    server_config.transport_config(transport_config());
+
     let addr = "0.0.0.0:5000".parse::<SocketAddr>()?;
     let endpoint = Endpoint::server(server_config, addr)?;
 
@@ -99,7 +129,8 @@ async fn handle_connection(connection: quinn::Connection) -> Result<()> {
 // --- 客户端逻辑 (已修改) ---
 
 async fn run_client(streams_count: usize, total_size: usize, server_addr: SocketAddr) -> Result<()> {
-    let client_config = client_config();
+    let mut client_config = client_config();
+    client_config.transport_config(transport_config());
 
     let mut endpoint = Endpoint::client("0.0.0.0:0".parse().unwrap())?;
     endpoint.set_default_client_config(client_config);
