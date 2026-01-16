@@ -16,6 +16,10 @@ futures = "0.3.31"
 tokio-util = "0.7.18"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 log = "0.4.29"
+clap = { version = "4.5.54", features = ["derive"] }
+quinn = "0.11.9"
+rcgen = "0.14.6"
+rustls = "0.23.36"
 
 [profile.release]
 debug = true  # 关键！保留函数名符号，但不影响优化等级
