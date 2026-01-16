@@ -3,6 +3,14 @@ name = "qs"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "bandwidth"
+path = "src/bin/bandwidth.rs"
+
+[[bin]]
+name = "proxy"
+path = "src/bin/proxy.rs"
+
 [dependencies]
 tokio = {version = "1.49.0", features = ["full"]}
 bytes = "1.11.0"
