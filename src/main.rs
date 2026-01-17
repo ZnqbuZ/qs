@@ -7,6 +7,7 @@ use crate::gateway::quic::{QuicEndpoint, QuicOutputRx, QuicPacket, QuicPacketMar
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{info, trace};
 use tracing_subscriber::EnvFilter;
@@ -15,13 +16,13 @@ use tracing_subscriber::EnvFilter;
 const SERVER_ADDR: &str = "127.0.0.1:4433";
 const CLIENT_ADDR: &str = "127.0.0.1:10000";
 
-const TEST1: bool = false;
+const TEST1: bool = true;
 const PAYLOAD_SIZE_1: usize = 8192 * 1024 * 1024;
 
 const TEST2: bool = false;
 const ITERATION_COUNT: usize = 100_000;
 
-const TEST3: bool = true;
+const TEST3: bool = false;
 const STREAM_COUNT: usize = 16;
 const PAYLOAD_SIZE_3: usize = 4096 * 1024 * 1024;
 
@@ -34,7 +35,7 @@ async fn main() {
         EnvFilter::new("qs=trace")
     } else {
         // Release 构建，只打印 info 以上
-        EnvFilter::new("qs=info")
+        EnvFilter::new("qs=debug")
     };
 
     // 开启日志以便观察握手过程（可选）
@@ -43,10 +44,21 @@ async fn main() {
     info!("=== 开始 QUIC 库性能基准测试 ===");
     info!("测试环境: 内存直连 (In-memory), 排除 OS UDP 栈干扰");
 
-    if TEST1 { benchmark_throughput().await; }
-    if TEST2 { benchmark_latency_pps().await;}
-    if TEST3 { benchmark_concurrent_throughput().await;}
+    if TEST1 {
+        benchmark_throughput().await;
+    }
+    if TEST2 {
+        benchmark_latency_pps().await;
+    }
+    if TEST3 {
+        benchmark_concurrent_throughput().await;
+    }
 }
+
+const LOSS: f64 = 0.0;
+const LATENCY: u64 = 0;
+const BATCH_SIZE: usize = 4096;
+const BUFFER_SIZE: usize = 64 * 1024 * 1024;
 
 /// 测试 1: 最大单流吞吐量 (Bandwidth)
 async fn benchmark_throughput() {
@@ -84,7 +96,9 @@ async fn benchmark_throughput() {
     // 改用 send_batch
     tokio::spawn(async move {
         let mut rx = client_packet_rx;
-        let mut batch = Vec::with_capacity(32);
+        let mut batch = Vec::with_capacity(BATCH_SIZE);
+
+        let mut count = 0;
 
         loop {
             // 1. 阻塞等待至少一个包
@@ -96,26 +110,32 @@ async fn benchmark_throughput() {
             // 修正地址：发送给 Server 的包，其“源地址”对 Server 来说是 Client
             let mut p = pkt;
             p.addr = CLIENT_ADDR.parse().unwrap();
-            batch.push(p);
+            count += 1;
+            if count as f64 * LOSS <= 1. {
+                batch.push(p);
+            } else {
+                count = 0;
+            }
 
             // 2. 尝试获取更多包
-            for _ in 0..31 {
+            for _ in 0..(BATCH_SIZE - 1) {
                 match rx.try_recv() {
                     Ok(mut p) => {
                         p.addr = CLIENT_ADDR.parse().unwrap();
-                        batch.push(p);
+                        count += 1;
+                        if count as f64 * LOSS <= 1. {
+                            batch.push(p);
+                        } else {
+                            count = 0;
+                        }
                     }
                     Err(_) => break,
                 }
             }
 
-            // 3. 批量发送
-            if s_arc
-                .send_batch(batch.drain(..))
-                .await
-                .is_err()
-            {
-                break;
+            // 延迟结束后发送
+            if let Err(_) = s_arc.send_batch(batch.drain(..)).await {
+                // 连接可能已关闭，忽略错误
             }
 
             // 4. 让出 CPU
@@ -127,7 +147,7 @@ async fn benchmark_throughput() {
     // 改用 send_batch
     tokio::spawn(async move {
         let mut rx = server_packet_rx;
-        let mut batch = Vec::with_capacity(32);
+        let mut batch = Vec::with_capacity(BATCH_SIZE);
 
         loop {
             let pkt = match rx.recv().await {
@@ -139,7 +159,7 @@ async fn benchmark_throughput() {
             p.addr = SERVER_ADDR.parse().unwrap();
             batch.push(p);
 
-            for _ in 0..31 {
+            for _ in 0..(BATCH_SIZE - 1) {
                 match rx.try_recv() {
                     Ok(mut p) => {
                         p.addr = SERVER_ADDR.parse().unwrap();
@@ -149,12 +169,9 @@ async fn benchmark_throughput() {
                 }
             }
 
-            if c_arc
-                .send_batch(batch.drain(..))
-                .await
-                .is_err()
-            {
-                break;
+            // 延迟结束后发送
+            if let Err(_) = c_arc.send_batch(batch.drain(..)).await {
+                // 连接可能已关闭，忽略错误
             }
 
             tokio::task::yield_now().await;
@@ -165,9 +182,17 @@ async fn benchmark_throughput() {
     let server_handle = tokio::spawn(async move {
         trace!("Server: 等待接收数据...");
         if let Some(mut stream) = server_new_streams.recv().await {
-            let mut buf = vec![0u8; 64 * 1024]; // 64KB buffer
+            let mut buf = vec![0u8; BUFFER_SIZE]; // 64KB buffer
             let mut total_bytes = 0;
             let start = Instant::now();
+            let pb = ProgressBar::new(PAYLOAD_SIZE_1 as u64);
+            pb.set_draw_target(ProgressDrawTarget::stdout_with_hz(10));
+            pb.set_style(
+                ProgressStyle::with_template(
+                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta}) {bytes_per_sec}"
+                )
+                    .unwrap()
+            );
             loop {
                 let n = stream.read(&mut buf).await.unwrap();
                 trace!("Server: 接收数据... 已接收 {} bytes", total_bytes + n);
@@ -175,8 +200,9 @@ async fn benchmark_throughput() {
                     break;
                 }
                 total_bytes += n;
+                pb.inc(n as u64);
             }
-            trace!("Server: 数据接收完毕，总计 {} bytes", total_bytes);
+            pb.finish_with_message(format!("Server: 数据接收完毕，总计 {} bytes", total_bytes));
             let duration = start.elapsed();
             return (total_bytes, duration);
         }
@@ -210,7 +236,7 @@ async fn benchmark_throughput() {
         trace!("Client: 流已打开，开始发送数据...");
         // 拿到流之后继续业务逻辑...
         let payload_size = PAYLOAD_SIZE_1; // 1GB
-        let chunk_size = 64 * 1024;
+        let chunk_size = BUFFER_SIZE;
         let data = vec![1u8; chunk_size];
 
         let mut sent = 0;
@@ -393,11 +419,7 @@ async fn benchmark_concurrent_throughput() {
                 }
             }
 
-            if s_arc
-                .send_batch(batch.drain(..))
-                .await
-                .is_err()
-            {
+            if s_arc.send_batch(batch.drain(..)).await.is_err() {
                 break;
             }
 
@@ -430,11 +452,7 @@ async fn benchmark_concurrent_throughput() {
                 }
             }
 
-            if c_arc
-                .send_batch(batch.drain(..))
-                .await
-                .is_err()
-            {
+            if c_arc.send_batch(batch.drain(..)).await.is_err() {
                 break;
             }
 
