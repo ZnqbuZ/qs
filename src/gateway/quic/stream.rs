@@ -80,8 +80,6 @@ impl AsyncRead for QuicStream {
 
         drop(state);
 
-        trace!("poll_read stream_id={} len={}", self.id, len);
-
         for data in data.drain(..) {
             buf.put_slice(&data);
         }
@@ -98,7 +96,6 @@ impl AsyncWrite for QuicStream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        trace!("poll_write stream_id={} len={}", self.id, buf.len());
         let data = self.pool.buf(buf, (0, 0).into()).freeze();
         let mut state = self.ctrl.state.lock();
         let ConnState {
