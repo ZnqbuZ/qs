@@ -1,10 +1,9 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use qs::transport_config;
-use quinn_plaintext::client_config;
-use quinn_plaintext::server_config;
-use std::net::SocketAddr;
-use tokio::io::join;
+use qs::{client_config, server_config};
+use std::net::{Ipv4Addr, SocketAddr};
+use tokio::io::{join, AsyncReadExt, AsyncWriteExt};
+use tun::PlatformConfig;
 
 // 定义 CLI 结构
 #[derive(Parser)]
@@ -36,6 +35,22 @@ enum Commands {
         #[arg(short, long)]
         target: String,
     },
+    /// 运行服务端 (VPN 模式)
+    /// 需 Root 权限: sudo ./target/release/proxy vpn-server --tun-ip 10.0.0.1
+    VpnServer {
+        #[arg(short, long, default_value = "0.0.0.0:4433")]
+        listen: SocketAddr,
+        #[arg(long, default_value = "10.0.0.1")]
+        tun_ip: Ipv4Addr,
+    },
+    /// 运行客户端 (VPN 模式)
+    /// 需 Root 权限: sudo ./target/release/proxy vpn-client --server <SERVER_IP>:4433 --tun-ip 10.0.0.2
+    VpnClient {
+        #[arg(short, long)]
+        server: SocketAddr,
+        #[arg(long, default_value = "10.0.0.2")]
+        tun_ip: Ipv4Addr,
+    },
 }
 
 #[tokio::main]
@@ -45,18 +60,125 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Server { listen } => run_server(listen).await,
         Commands::Client { server, local, target } => run_client(server, local, target).await,
+        Commands::VpnServer { listen, tun_ip } => run_vpn_server(listen, tun_ip).await,
+        Commands::VpnClient { server, tun_ip } => run_vpn_client(server, tun_ip).await,
     }
+}
+
+// --- 核心逻辑: IP 搬运工 ---
+// 只要连接建立，逻辑对 Client 和 Server 几乎是一样的
+async fn run_tunnel(connection: quinn::Connection, tun_dev: tun::AsyncDevice) -> Result<()> {
+    // 由于 tun crate 的 split 比较麻烦，我们用 Arc<AsyncDevice> + loop select 简单处理
+    // 或者直接把 tun 分成 reader/writer (tun crate 支持 into_split)
+    let (mut tun_write, mut tun_read) = tun_dev.split()?;
+
+    // 任务1: TUN -> QUIC (发送 IP 包)
+    let conn_tx = connection.clone();
+    let t1 = tokio::spawn(async move {
+        let mut buf = vec![0u8; 1500]; // 必须小于 QUIC MTU
+        loop {
+            match tun_read.read(&mut buf).await {
+                Ok(n) => {
+                    // 使用 Datagram 发送 (不可靠，低延迟，适合 VPN)
+                    // 如果包太大超过 MTU，QUIC 会报错，这里简略处理
+                    let packet = bytes::Bytes::copy_from_slice(&buf[..n]);
+                    if let Err(e) = conn_tx.send_datagram(packet) {
+                        eprintln!("发送 Datagram 失败 (可能包太大): {}", e);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("读取 TUN 失败: {}", e);
+                    break;
+                }
+            }
+        }
+    });
+
+    // 任务2: QUIC -> TUN (接收 IP 包)
+    let t2 = tokio::spawn(async move {
+        loop {
+            // 读取 Datagram
+            match connection.read_datagram().await {
+                Ok(data) => {
+                    if let Err(e) = tun_write.write_all(&data).await {
+                        eprintln!("写入 TUN 失败: {}", e);
+                        break;
+                    }
+                }
+                Err(e) => {
+                    eprintln!("连接断开: {}", e);
+                    break;
+                }
+            }
+        }
+    });
+
+    let _ = tokio::join!(t1, t2);
+    Ok(())
+}
+
+// --- VPN 服务端 ---
+async fn run_vpn_server(listen_addr: SocketAddr, tun_ip: Ipv4Addr) -> Result<()> {
+    // 1. 创建 TUN
+    let mut config = tun::Configuration::default();
+    config.address(tun_ip).netmask((255, 255, 255, 0)).up();
+    config.platform_config(|c| { c.packet_information(false); }); // Linux 不需要 PI 头
+
+    let tun_dev = tun::create_as_async(&config).context("创建 TUN 失败 (需要 root?)")?;
+    println!("🚀 Server TUN 启动: {}", tun_ip);
+    println!("⚠️  请确保开启了内核转发: sysctl -w net.ipv4.ip_forward=1");
+    println!("⚠️  请设置 NAT: iptables -t nat -A POSTROUTING -s 10.0.0.0/24 ! -d 10.0.0.0/24 -j MASQUERADE");
+
+    // 2. 启动 QUIC
+    let server_config = server_config(); // 假设你在 utils 里有这个
+    let endpoint = quinn::Endpoint::server(server_config, listen_addr)?;
+    println!("🎧 等待客户端连接...");
+
+    // 简单起见，这里只接受一个客户端连接，或者需要为每个客户端创建不同的 TUN/路由逻辑
+    // 为了演示 IP over QUIC，我们假设是一对一，或者所有客户端共享这个 TUN (都在 10.0.0.x 子网)
+    if let Some(conn) = endpoint.accept().await {
+        let connection = conn.await?;
+        println!("+ 客户端已连接: {}", connection.remote_address());
+
+        // 进入隧道模式
+        run_tunnel(connection, tun_dev).await?;
+    }
+
+    Ok(())
+}
+
+// --- VPN 客户端 ---
+async fn run_vpn_client(server_addr: SocketAddr, tun_ip: Ipv4Addr) -> Result<()> {
+    // 1. 创建 TUN
+    let mut config = tun::Configuration::default();
+    config.address(tun_ip).netmask((255, 255, 255, 0)).up();
+    config.platform_config(|c| { c.packet_information(false); });
+
+    let tun_dev = tun::create_as_async(&config).context("创建 TUN 失败")?;
+    println!("🚀 Client TUN 启动: {}", tun_ip);
+
+    // 2. 连接 QUIC
+    let client_config = client_config();
+    let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse()?)?;
+    endpoint.set_default_client_config(client_config);
+
+    println!("⏳ 连接服务端 {}...", server_addr);
+    let connection = endpoint.connect(server_addr, "localhost")?.await?;
+    println!("✅ 连接成功，开始转发 IP 包...");
+
+    // 3. 配置路由 (提示用户)
+    println!("⚠️  现在请手动修改路由表，将流量指向 TUN 网卡，例如:");
+    println!("   ip route add 8.8.8.8 dev tun0 (测试用)");
+    println!("   或者配置默认路由 (小心不要把连 VPS 的流量也路由进去了!)");
+
+    run_tunnel(connection, tun_dev).await
 }
 
 // --- 服务端逻辑 ---
 
 async fn run_server(addr: SocketAddr) -> Result<()> {
-    // 1. 生成自签名证书 (仅用于演示，生产环境请使用正规证书)
-    let mut server_config = server_config();
-    server_config.transport_config(transport_config());
-
     // 2. 创建 QUIC Endpoint
-    let endpoint = quinn::Endpoint::server(server_config, addr)?;
+    let endpoint = quinn::Endpoint::server(qs::server_config(), addr)?;
     println!("🚀 服务端监听于 UDP: {}", addr);
 
     // 3. 接受连接
@@ -126,12 +248,8 @@ async fn run_server(addr: SocketAddr) -> Result<()> {
 // --- 客户端逻辑 ---
 
 async fn run_client(server_addr: SocketAddr, local_addr: SocketAddr, target: String) -> Result<()> {
-    // 1. 配置客户端 (跳过证书验证以便演示)
-    let mut client_config = client_config();
-    client_config.transport_config(transport_config());
-
     let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse().unwrap())?;
-    endpoint.set_default_client_config(client_config);
+    endpoint.set_default_client_config(qs::client_config());
 
     println!("⏳ 正在连接到服务端 QUIC {}...", server_addr);
 
