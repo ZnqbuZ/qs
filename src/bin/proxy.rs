@@ -104,9 +104,11 @@ async fn run_server(addr: SocketAddr) -> Result<()> {
                             let mut quic_stream = join(recv_stream, send_stream);
 
                             // 代理数据：TCP <-> QUIC
-                            let _ = tokio::io::copy_bidirectional(
+                            let _ = tokio::io::copy_bidirectional_with_sizes(
                                 &mut tcp_stream,
-                                &mut quic_stream
+                                &mut quic_stream,
+                                1 << 20,
+                                1 << 20,
                             ).await;
                         }
                         Err(e) => {
@@ -177,9 +179,11 @@ async fn run_client(server_addr: SocketAddr, local_addr: SocketAddr, target: Str
                     // 5. 进行双向转发
                     let mut quic_stream = join(recv_stream, send_stream);
 
-                    let _ = tokio::io::copy_bidirectional(
+                    let _ = tokio::io::copy_bidirectional_with_sizes(
                         &mut socket,
                         &mut quic_stream,
+                        1 << 20,
+                        1 << 20,
                     ).await;
                 }
                 Err(e) => eprintln!("打开 QUIC 流失败: {}", e),
