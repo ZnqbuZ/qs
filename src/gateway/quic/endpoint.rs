@@ -127,11 +127,11 @@ impl QuicEndpoint {
     pub fn new(packet_margins: QuicPacketMargins) -> (Self, QuicOutputRx) {
         let mut transport_config = TransportConfig::default();
 
-        transport_config.initial_mtu(65535);
-        transport_config.min_mtu(65535);
+        transport_config.initial_mtu(1200);
+        transport_config.min_mtu(1200);
 
-        transport_config.stream_receive_window(VarInt::from_u32(10 * 1024 * 1024));
-        transport_config.receive_window(VarInt::from_u32(15 * 1024 * 1024));
+        // transport_config.stream_receive_window(VarInt::from_u32(10 * 1024 * 1024));
+        // transport_config.receive_window(VarInt::from_u32(15 * 1024 * 1024));
 
         transport_config.max_concurrent_bidi_streams(VarInt::from_u32(1024));
         transport_config.max_concurrent_uni_streams(VarInt::from_u32(1024));
@@ -139,10 +139,7 @@ impl QuicEndpoint {
         transport_config.congestion_controller_factory(Arc::new(BbrConfig::default()));
 
         transport_config.keep_alive_interval(Some(Duration::from_secs(15)));
-        transport_config.max_idle_timeout(Some(VarInt::from_u32(3_000).into()));
-
-        transport_config.datagram_receive_buffer_size(Some(65535));
-        transport_config.datagram_send_buffer_size(65535);
+        transport_config.max_idle_timeout(Some(VarInt::from_u32(30_000).into()));
 
         transport_config.enable_segmentation_offload(false);
 
@@ -154,7 +151,7 @@ impl QuicEndpoint {
         server_config.transport = transport_config.clone();
 
         let mut endpoint_config = EndpointConfig::default();
-        endpoint_config.max_udp_payload_size(1200).unwrap();
+        // endpoint_config.max_udp_payload_size(1200).unwrap();
 
         let endpoint = Endpoint::new(
             Arc::from(endpoint_config),
