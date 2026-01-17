@@ -5,6 +5,8 @@ use quinn::TransportConfig;
 use quinn::VarInt;
 use std::sync::Arc;
 use std::time::Duration;
+use quinn::EndpointConfig;
+use quinn_proto::congestion::CubicConfig;
 
 pub fn transport_config() -> Arc<TransportConfig> {
     // TODO: subject to change
@@ -17,13 +19,14 @@ pub fn transport_config() -> Arc<TransportConfig> {
         .send_window(1024 * 1024 * 1024)
         .max_concurrent_bidi_streams(VarInt::from_u32(1024))
         .max_concurrent_uni_streams(VarInt::from_u32(0))
-        .datagram_receive_buffer_size(None)
         .keep_alive_interval(Some(Duration::from_secs(5)))
         .max_idle_timeout(Some(VarInt::from_u32(30_000).into()))
         .initial_mtu(1200)
         .min_mtu(1200)
-        .enable_segmentation_offload(false)
-        .congestion_controller_factory(Arc::new(BbrConfig::default()));
+        .enable_segmentation_offload(true)
+        .congestion_controller_factory(Arc::new(BbrConfig::default()))
+        .datagram_receive_buffer_size(Some(1024 * 1024 * 1024))
+        .datagram_send_buffer_size(1024 * 1024 * 1024);
 
     Arc::new(config)
 }
@@ -37,5 +40,11 @@ pub fn server_config() -> ServerConfig {
 pub fn client_config() -> ClientConfig {
     let mut config = quinn_plaintext::client_config();
     config.transport_config(transport_config());
+    config
+}
+
+pub fn endpoint_config() -> EndpointConfig {
+    let mut config = EndpointConfig::default();
+    config.max_udp_payload_size(65527).unwrap();
     config
 }

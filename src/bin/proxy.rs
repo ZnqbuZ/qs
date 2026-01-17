@@ -1,7 +1,10 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use qs::{client_config, server_config};
-use std::net::{Ipv4Addr, SocketAddr};
+use qs::{client_config, endpoint_config, server_config};
+use quinn::TokioRuntime;
+use quinn_proto::EndpointConfig;
+use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
+use std::sync::Arc;
 use tokio::io::{join, AsyncReadExt, AsyncWriteExt};
 use tun::PlatformConfig;
 
@@ -59,11 +62,17 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Server { listen } => run_server(listen).await,
-        Commands::Client { server, local, target } => run_client(server, local, target).await,
+        Commands::Client {
+            server,
+            local,
+            target,
+        } => run_client(server, local, target).await,
         Commands::VpnServer { listen, tun_ip } => run_vpn_server(listen, tun_ip).await,
         Commands::VpnClient { server, tun_ip } => run_vpn_client(server, tun_ip).await,
     }
 }
+
+const TUN_MTU: u16 = 1120;
 
 // --- 核心逻辑: IP 搬运工 ---
 // 只要连接建立，逻辑对 Client 和 Server 几乎是一样的
@@ -75,7 +84,7 @@ async fn run_tunnel(connection: quinn::Connection, tun_dev: tun::AsyncDevice) ->
     // 任务1: TUN -> QUIC (发送 IP 包)
     let conn_tx = connection.clone();
     let t1 = tokio::spawn(async move {
-        let mut buf = vec![0u8; 1500]; // 必须小于 QUIC MTU
+        let mut buf = vec![0; TUN_MTU as usize]; // 必须小于 QUIC MTU
         loop {
             match tun_read.read(&mut buf).await {
                 Ok(n) => {
@@ -83,7 +92,7 @@ async fn run_tunnel(connection: quinn::Connection, tun_dev: tun::AsyncDevice) ->
                     // 如果包太大超过 MTU，QUIC 会报错，这里简略处理
                     let packet = bytes::Bytes::copy_from_slice(&buf[..n]);
                     if let Err(e) = conn_tx.send_datagram(packet) {
-                        eprintln!("发送 Datagram 失败 (可能包太大): {}", e);
+                        eprintln!("发送 Datagram (len {:?}) 失败 (可能包太大): {}", n, e);
                     }
                 }
                 Err(e) => {
@@ -121,8 +130,11 @@ async fn run_tunnel(connection: quinn::Connection, tun_dev: tun::AsyncDevice) ->
 async fn run_vpn_server(listen_addr: SocketAddr, tun_ip: Ipv4Addr) -> Result<()> {
     // 1. 创建 TUN
     let mut config = tun::Configuration::default();
-    config.address(tun_ip).netmask((255, 255, 255, 0)).up();
-    config.platform_config(|c| { c.packet_information(false); }); // Linux 不需要 PI 头
+    config
+        .address(tun_ip)
+        .netmask((255, 255, 255, 0))
+        .mtu(TUN_MTU)
+        .up();
 
     let tun_dev = tun::create_as_async(&config).context("创建 TUN 失败 (需要 root?)")?;
     println!("🚀 Server TUN 启动: {}", tun_ip);
@@ -130,8 +142,14 @@ async fn run_vpn_server(listen_addr: SocketAddr, tun_ip: Ipv4Addr) -> Result<()>
     println!("⚠️  请设置 NAT: iptables -t nat -A POSTROUTING -s 10.0.0.0/24 ! -d 10.0.0.0/24 -j MASQUERADE");
 
     // 2. 启动 QUIC
-    let server_config = server_config(); // 假设你在 utils 里有这个
-    let endpoint = quinn::Endpoint::server(server_config, listen_addr)?;
+    let socket = UdpSocket::bind(listen_addr)?;
+    let mut endpoint = quinn::Endpoint::new(
+        endpoint_config(),
+        Some(server_config()),
+        socket,
+        Arc::new(TokioRuntime),
+    )?;
+    endpoint.set_default_client_config(client_config());
     println!("🎧 等待客户端连接...");
 
     // 简单起见，这里只接受一个客户端连接，或者需要为每个客户端创建不同的 TUN/路由逻辑
@@ -151,16 +169,25 @@ async fn run_vpn_server(listen_addr: SocketAddr, tun_ip: Ipv4Addr) -> Result<()>
 async fn run_vpn_client(server_addr: SocketAddr, tun_ip: Ipv4Addr) -> Result<()> {
     // 1. 创建 TUN
     let mut config = tun::Configuration::default();
-    config.address(tun_ip).netmask((255, 255, 255, 0)).up();
-    config.platform_config(|c| { c.packet_information(false); });
+    config
+        .address(tun_ip)
+        .netmask((255, 255, 255, 0))
+        .mtu(TUN_MTU)
+        .up();
 
     let tun_dev = tun::create_as_async(&config).context("创建 TUN 失败")?;
     println!("🚀 Client TUN 启动: {}", tun_ip);
 
     // 2. 连接 QUIC
-    let client_config = client_config();
-    let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse()?)?;
-    endpoint.set_default_client_config(client_config);
+    let addr: SocketAddr = "0.0.0.0:0".parse()?;
+    let socket = UdpSocket::bind(addr)?;
+    let mut endpoint = quinn::Endpoint::new(
+        endpoint_config(),
+        Some(server_config()),
+        socket,
+        Arc::new(TokioRuntime),
+    )?;
+    endpoint.set_default_client_config(client_config());
 
     println!("⏳ 连接服务端 {}...", server_addr);
     let connection = endpoint.connect(server_addr, "localhost")?.await?;
@@ -231,7 +258,8 @@ async fn run_server(addr: SocketAddr) -> Result<()> {
                                 &mut quic_stream,
                                 1 << 20,
                                 1 << 20,
-                            ).await;
+                            )
+                            .await;
                         }
                         Err(e) => {
                             eprintln!("  ! 无法连接到目标 TCP {}: {}", target_str, e);
@@ -302,7 +330,8 @@ async fn run_client(server_addr: SocketAddr, local_addr: SocketAddr, target: Str
                         &mut quic_stream,
                         1 << 20,
                         1 << 20,
-                    ).await;
+                    )
+                    .await;
                 }
                 Err(e) => eprintln!("打开 QUIC 流失败: {}", e),
             }
