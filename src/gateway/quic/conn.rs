@@ -4,7 +4,6 @@ use parking_lot::Mutex;
 use quinn_proto::{Connection, ConnectionEvent, Dir, StreamId, VarInt};
 use std::collections::HashMap;
 use std::io::{Error, Result};
-use std::iter::chain;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::task::Waker;
@@ -55,7 +54,7 @@ impl ConnState {
     }
 
     pub(crate) fn clear(&mut self) {
-        for (_, waker) in chain(self.readers.drain(), self.writers.drain()) {
+        for (_, waker) in self.readers.drain().chain(self.writers.drain()) {
             waker.wake();
         }
     }

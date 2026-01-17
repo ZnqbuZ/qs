@@ -3,6 +3,7 @@ use crate::gateway::quic::packet::{PacketPool, QuicPacketMargins, QuicPacketRx, 
 use crate::gateway::quic::runner::Runner;
 use crate::gateway::quic::stream::{QuicStream, QuicStreamRx, QuicStreamTx};
 use crate::gateway::quic::utils::switched_channel;
+use crate::gateway::quic::QuicPacket;
 use bytes::BytesMut;
 use dashmap::DashMap;
 use derive_more::Debug;
@@ -24,7 +25,6 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tracing::{error, info, trace};
-use crate::gateway::quic::QuicPacket;
 
 type RunnerTx = mpsc::UnboundedSender<RunnerGuard>;
 type RunnerRx = mpsc::UnboundedReceiver<RunnerGuard>;
@@ -68,10 +68,10 @@ impl Driver {
         while let Some(mut guard) = self.rx.recv().await {
             self.tasks.spawn(async move {
                 let res = guard.runner.run().await;
-                if let Err(e) = res
-                    && !guard.runner.shutdown.load(Ordering::Relaxed)
-                {
-                    error!("Runner exited with error: {:?}", e);
+                if let Err(e) = res {
+                    if !guard.runner.shutdown.load(Ordering::Relaxed) {
+                        error!("Runner exited with error: {:?}", e);
+                    }
                 }
             });
         }
@@ -397,8 +397,11 @@ impl QuicEndpoint {
                     }
                     Some(DatagramEvent::Response(transmit)) => {
                         let packet = PACKET_POOL.with(|pool| {
-                            pool.borrow_mut()
-                                .pack_transmit(transmit, buf, self.output.packet.margins)
+                            pool.borrow_mut().pack_transmit(
+                                transmit,
+                                buf,
+                                self.output.packet.margins,
+                            )
                         });
                         responses.push(packet);
                     }
@@ -408,7 +411,6 @@ impl QuicEndpoint {
         } // 锁释放
 
         for hdl in notify {
-
             if let Some(ctrl) = self.ctrls.get(&hdl).map(|ctrl| ctrl.clone()) {
                 ctrl.notify.notify_one();
             }

@@ -23,10 +23,9 @@
     </cargoProject>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="ec1f0d40-3ac5-4f78-ac6d-97b72ebc55d6" name="更改" comment="add batch processing, adjust some param for benchmark">
+    <list default="true" id="ec1f0d40-3ac5-4f78-ac6d-97b72ebc55d6" name="更改" comment="better display">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/gateway/quic/endpoint.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/gateway/quic/endpoint.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/main.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/main.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/Cargo.toml" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -36,11 +35,16 @@
   <component name="ClangdSettings">
     <option name="formatViaClangd" value="false" />
   </component>
+  <component name="CopilotPersistence">
+    <persistenceIdMap>
+      <entry key="_E:/qs" value="37veYDpwA8BI2JNlhtbfvhBnhVY" />
+    </persistenceIdMap>
+  </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="23" />
+    <option name="cachedIndexableFilesCount" value="19" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
-  <component name="ExecutionTargetManager" SELECTED_TARGET="RsBuildProfile:release" />
+  <component name="ExecutionTargetManager" SELECTED_TARGET="RsBuildProfile:dev" />
   <component name="FileTemplateManagerImpl">
     <option name="RECENT_TEMPLATES">
       <list>
@@ -49,18 +53,22 @@
     </option>
   </component>
   <component name="Git.Settings">
+    <option name="RECENT_BRANCH_BY_REPOSITORY">
+      <map>
+        <entry key="$PROJECT_DIR$" value="quinn-test" />
+      </map>
+    </option>
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
-    <option name="RESET_MODE" value="KEEP" />
   </component>
-  <component name="GitHubPullRequestSearchHistory">{
-  &quot;lastFilter&quot;: {
-    &quot;state&quot;: &quot;OPEN&quot;,
-    &quot;assignee&quot;: &quot;ZnqbuZ&quot;
+  <component name="GitHubPullRequestSearchHistory"><![CDATA[{
+  "lastFilter": {
+    "state": "OPEN",
+    "assignee": "ZnqbuZ"
   }
-}</component>
+}]]></component>
   <component name="GithubPullRequestsUISettings">{
   &quot;selectedUrlAndAccountId&quot;: {
-    &quot;url&quot;: &quot;git@github.com:ZnqbuZ/qs.git&quot;,
+    &quot;url&quot;: &quot;git@github.com:/ZnqbuZ/qs.git&quot;,
     &quot;accountId&quot;: &quot;886742da-f912-42f9-a5ae-95c958c6989b&quot;
   }
 }</component>
@@ -70,9 +78,6 @@
   <component name="McpProjectServerCommands">
     <commands />
     <urls />
-  </component>
-  <component name="ProblemsViewState">
-    <option name="selectedTabId" value="CurrentFile" />
   </component>
   <component name="ProjectColorInfo">{
   &quot;associatedIndex&quot;: 5
@@ -86,7 +91,9 @@
   </component>
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
-    "Cargo.Run qn (1).executor": "Run",
+    "ASKED_SHARE_PROJECT_CONFIGURATION_FILES": "true",
+    "Cargo.Build.executor": "Run",
+    "Cargo.Run proxy.executor": "Run",
     "Cargo.Run qn.executor": "Run",
     "Cargo.Run qs.executor": "Run",
     "ModuleVcsDetector.initialDetectionPerformed": "true",
@@ -98,6 +105,7 @@
     "RunOnceActivity.git.unshallow": "true",
     "RunOnceActivity.readMode.enableVisualFormatting": "true",
     "RunOnceActivity.typescript.service.memoryLimit.init": "true",
+    "SHARE_PROJECT_CONFIGURATION_FILES": "true",
     "cf.first.check.clang-format": "false",
     "cidr.known.project.marker": "true",
     "git-widget-placeholder": "mutex-new",
@@ -107,28 +115,23 @@
     "node.js.selected.package.tslint": "(autodetect)",
     "nodejs_package_manager_path": "npm",
     "org.rust.cargo.project.model.PROJECT_DISCOVERY": "true",
-    "run.code.analysis.last.selected.profile": "pProject Default",
-    "settings.editor.selected.configurable": "preferences.lookFeel",
+    "settings.editor.selected.configurable": "language.rust.cargo.check",
     "vue.rearranger.settings.migration": "true"
   }
 }]]></component>
   <component name="RecentsManager">
     <key name="MoveFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/src/bin" />
       <recent name="D:\OneDrive - ZnqbuZ\repos\qs\src\gateway" />
       <recent name="D:\OneDrive - ZnqbuZ\repos\qs\src\quic" />
     </key>
   </component>
-  <component name="RsExternalLinterProjectSettings">
-    <option name="tool" value="Clippy" />
-  </component>
-  <component name="RunManager">
-    <configuration name="Run qs" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
-      <option name="buildProfileId" value="release" />
-      <option name="command" value="run --package qs --bin qs" />
+  <component name="RunManager" selected="Cargo.Build">
+    <configuration name="Build" type="CargoCommandRunConfiguration" factoryName="Cargo Command" nameIsGenerated="true">
+      <option name="buildProfileId" value="dev" />
+      <option name="command" value="build" />
       <option name="workingDirectory" value="file://$PROJECT_DIR$" />
-      <envs>
-        <env name="RUST_BACKTRACE" value="1 RUSTFLAGS=--cfg tokio_unstable" />
-      </envs>
+      <envs />
       <option name="emulateTerminal" value="true" />
       <option name="channel" value="DEFAULT" />
       <option name="requiredFeatures" value="true" />
@@ -142,13 +145,11 @@
         <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
       </method>
     </configuration>
-    <configuration name="Run qs" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
+    <configuration name="Run bandwidth" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
       <option name="buildProfileId" value="release" />
-      <option name="command" value="run --package qs --bin qs" />
+      <option name="command" value="run --package qs --bin bandwidth" />
       <option name="workingDirectory" value="file://$PROJECT_DIR$" />
-      <envs>
-        <env name="RUST_BACKTRACE" value="1 RUSTFLAGS=--cfg tokio_unstable" />
-      </envs>
+      <envs />
       <option name="emulateTerminal" value="true" />
       <option name="channel" value="DEFAULT" />
       <option name="requiredFeatures" value="true" />
@@ -162,10 +163,51 @@
         <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
       </method>
     </configuration>
+    <configuration name="Run proxy" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+      <option name="buildProfileId" value="release" />
+      <option name="command" value="run --package qs --bin proxy" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="Test" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+      <option name="buildProfileId" value="test" />
+      <option name="command" value="test --package qs --lib tests" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <list>
+      <item itemvalue="Cargo.Build" />
+      <item itemvalue="Cargo.Run proxy" />
+      <item itemvalue="Cargo.Test" />
+      <item itemvalue="Cargo.Run bandwidth" />
+    </list>
     <recent_temporary>
       <list>
-        <item itemvalue="Cargo.Run qs" />
-        <item itemvalue="Cargo.Run qs" />
+        <item itemvalue="Cargo.Run bandwidth" />
       </list>
     </recent_temporary>
   </component>
@@ -184,91 +226,25 @@
       <workItem from="1767910797853" duration="63000" />
       <workItem from="1767910931766" duration="651000" />
       <workItem from="1767947959986" duration="16408000" />
-      <workItem from="1768136606815" duration="34271000" />
-      <workItem from="1768262827960" duration="1036000" />
-      <workItem from="1768309273567" duration="2089000" />
+      <workItem from="1768661077865" duration="140000" />
     </task>
-    <task id="LOCAL-00001" summary="Refactor QUIC module structure and improve performance benchmarks">
+    <task id="LOCAL-00001" summary="better display">
       <option name="closed" value="true" />
-      <created>1768153598925</created>
+      <created>1768586198971</created>
       <option name="number" value="00001" />
       <option name="presentableId" value="LOCAL-00001" />
       <option name="project" value="LOCAL" />
-      <updated>1768153598925</updated>
+      <updated>1768586198971</updated>
     </task>
-    <task id="LOCAL-00002" summary="Adjust payload size and optimize chunk allocation in QUIC transmission">
+    <task id="LOCAL-00002" summary="change unit of total size to MB">
       <option name="closed" value="true" />
-      <created>1768155238400</created>
+      <created>1768587222951</created>
       <option name="number" value="00002" />
       <option name="presentableId" value="LOCAL-00002" />
       <option name="project" value="LOCAL" />
-      <updated>1768155238400</updated>
+      <updated>1768587222951</updated>
     </task>
-    <task id="LOCAL-00003" summary="Add BufAcc, used in Runner poll_transmit">
-      <option name="closed" value="true" />
-      <created>1768159349705</created>
-      <option name="number" value="00003" />
-      <option name="presentableId" value="LOCAL-00003" />
-      <option name="project" value="LOCAL" />
-      <updated>1768159349705</updated>
-    </task>
-    <task id="LOCAL-00004" summary="remove old impls">
-      <option name="closed" value="true" />
-      <created>1768161529904</created>
-      <option name="number" value="00004" />
-      <option name="presentableId" value="LOCAL-00004" />
-      <option name="project" value="LOCAL" />
-      <updated>1768161529904</updated>
-    </task>
-    <task id="LOCAL-00005" summary="rename">
-      <option name="closed" value="true" />
-      <created>1768161597603</created>
-      <option name="number" value="00005" />
-      <option name="presentableId" value="LOCAL-00005" />
-      <option name="project" value="LOCAL" />
-      <updated>1768161597603</updated>
-    </task>
-    <task id="LOCAL-00006" summary="Refactor QUIC connection and endpoint structures for improved readability and maintainability">
-      <option name="closed" value="true" />
-      <created>1768162837449</created>
-      <option name="number" value="00006" />
-      <option name="presentableId" value="LOCAL-00006" />
-      <option name="project" value="LOCAL" />
-      <updated>1768162837449</updated>
-    </task>
-    <task id="LOCAL-00007" summary="fix timeout, comment out stream drop">
-      <option name="closed" value="true" />
-      <created>1768164177680</created>
-      <option name="number" value="00007" />
-      <option name="presentableId" value="LOCAL-00007" />
-      <option name="project" value="LOCAL" />
-      <updated>1768164177680</updated>
-    </task>
-    <task id="LOCAL-00008" summary="add len() method to margins, add original ptr to BufAccWriter for safety">
-      <option name="closed" value="true" />
-      <created>1768165511089</created>
-      <option name="number" value="00008" />
-      <option name="presentableId" value="LOCAL-00008" />
-      <option name="project" value="LOCAL" />
-      <updated>1768165511089</updated>
-    </task>
-    <task id="LOCAL-00009" summary="replace ConnInbox with crossbeam ArrayQueue">
-      <option name="closed" value="true" />
-      <created>1768169182538</created>
-      <option name="number" value="00009" />
-      <option name="presentableId" value="LOCAL-00009" />
-      <option name="project" value="LOCAL" />
-      <updated>1768169182538</updated>
-    </task>
-    <task id="LOCAL-00010" summary="add batch processing, adjust some param for benchmark">
-      <option name="closed" value="true" />
-      <created>1768260613912</created>
-      <option name="number" value="00010" />
-      <option name="presentableId" value="LOCAL-00010" />
-      <option name="project" value="LOCAL" />
-      <updated>1768260613912</updated>
-    </task>
-    <option name="localTasksCounter" value="11" />
+    <option name="localTasksCounter" value="3" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -286,18 +262,9 @@
     </option>
   </component>
   <component name="VcsManagerConfiguration">
-    <MESSAGE value="Refactor QUIC module structure and improve performance benchmarks" />
-    <MESSAGE value="Adjust payload size and optimize chunk allocation in QUIC transmission" />
-    <MESSAGE value="Add BufAcc, used in Runner poll_transmit" />
-    <MESSAGE value="remove old impls" />
-    <MESSAGE value="rename" />
-    <MESSAGE value="Refactor QUIC connection and endpoint structures for improved readability and maintainability" />
-    <MESSAGE value="fix timeout, comment out stream drop" />
-    <MESSAGE value="add len() method to margins, add original ptr to BufAccWriter for safety" />
-    <MESSAGE value="replace ConnInbox with crossbeam ArrayQueue" />
-    <MESSAGE value="add batch processing, adjust some param for bench" />
-    <MESSAGE value="add batch processing, adjust some param for benchmark" />
-    <option name="LAST_COMMIT_MESSAGE" value="add batch processing, adjust some param for benchmark" />
+    <MESSAGE value="better display" />
+    <MESSAGE value="change unit of total size to MB" />
+    <option name="LAST_COMMIT_MESSAGE" value="change unit of total size to MB" />
   </component>
   <component name="XSLT-Support.FileAssociations.UIState">
     <expand />
