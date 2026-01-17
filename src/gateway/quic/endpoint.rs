@@ -130,8 +130,9 @@ impl QuicEndpoint {
         transport_config.initial_mtu(1200);
         transport_config.min_mtu(1200);
 
-        // transport_config.stream_receive_window(VarInt::from_u32(10 * 1024 * 1024));
-        // transport_config.receive_window(VarInt::from_u32(15 * 1024 * 1024));
+        transport_config.stream_receive_window(VarInt::from_u32(64 * 1024 * 1024));
+        transport_config.receive_window(VarInt::from_u32(1024 * 1024 * 1024));
+        transport_config.send_window(1024 * 1024 * 1024);
 
         transport_config.max_concurrent_bidi_streams(VarInt::from_u32(1024));
         transport_config.max_concurrent_uni_streams(VarInt::from_u32(1024));
@@ -172,7 +173,7 @@ impl QuicEndpoint {
         client_config: ClientConfig,
         packet_margins: QuicPacketMargins,
     ) -> (Self, QuicOutputRx) {
-        let (packet_tx, packet_rx) = mpsc::channel(1024);
+        let (packet_tx, packet_rx) = mpsc::channel(1 << 20);
         let (stream_tx, stream_rx) = switched_channel(512);
         let output_tx = QuicOutputTx {
             packet: QuicPacketTx::new(packet_tx, packet_margins),
@@ -419,6 +420,72 @@ impl QuicEndpoint {
                 .packet
                 .send(pkt)
                 .await
+                .map_err(|e| Error::other(format!("Failed to send QUIC response: {:?}", e)))?;
+        }
+        Ok(())
+    }
+
+    // 新增：批量发送方法
+    pub async fn try_send_batch(&self, packets: impl IntoIterator<Item = QuicPacket>) -> Result<()> {
+        let mut responses = Vec::new();
+        let mut buf_guard = BufferGuard::new();
+        let buf = &mut buf_guard.0;
+        let mut notify = Vec::new();
+
+        // 作用域：持有 endpoint 锁
+        {
+            let mut endpoint = self.endpoint.lock();
+            let now = Instant::now();
+
+            for pkt in packets {
+                let event = endpoint.handle(now, pkt.addr, None, None, pkt.payload, buf);
+                match event {
+                    Some(DatagramEvent::NewConnection(incoming)) => {
+                        if !self.output.stream.switch().load(Ordering::Relaxed) {
+                            trace!("Incoming stream channel is closed. Connection dropped.");
+                            continue;
+                        }
+                        // 使用 internal 版本，复用锁和 buffer
+                        match self.accept_internal(&mut endpoint, incoming, buf) {
+                            Ok(Some(resp)) => responses.push(resp),
+                            Err(e) => error!("Failed to accept connection in batch: {:?}", e),
+                            _ => {}
+                        }
+                    }
+                    Some(DatagramEvent::ConnectionEvent(hdl, evt)) => {
+                        if let Some(ctrl) = self.ctrls.get(&hdl).map(|ctrl| ctrl.clone()) {
+                            let _ = ctrl.inbox.push(evt);
+                            notify.push(hdl);
+                        } else {
+                            trace!("Connection handle {:?} not found during batch send", hdl);
+                        }
+                    }
+                    Some(DatagramEvent::Response(transmit)) => {
+                        let packet = PACKET_POOL.with(|pool| {
+                            pool.borrow_mut().pack_transmit(
+                                transmit,
+                                buf,
+                                self.output.packet.margins,
+                            )
+                        });
+                        responses.push(packet);
+                    }
+                    None => {}
+                }
+            }
+        } // 锁释放
+
+        for hdl in notify {
+            if let Some(ctrl) = self.ctrls.get(&hdl).map(|ctrl| ctrl.clone()) {
+                ctrl.notify.notify_one();
+            }
+        }
+
+        // 异步发送所有响应包
+        for pkt in responses {
+            self.output
+                .packet
+                .try_send(pkt)
                 .map_err(|e| Error::other(format!("Failed to send QUIC response: {:?}", e)))?;
         }
         Ok(())
