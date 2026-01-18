@@ -30,6 +30,7 @@ rcgen = "0.14.6"
 rustls = "0.23.36"
 indicatif = "0.18.3"
 tun = { version = "0.8.5", features = ["async"]}
+netstack-smoltcp = "0.2.0"
 
 [profile.release]
 debug = true  # 关键！保留函数名符号，但不影响优化等级

@@ -1,12 +1,12 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use futures::{SinkExt, StreamExt};
+use netstack_smoltcp::{StackBuilder, TcpStream as NetstackTcpStream};
 use qs::{client_config, endpoint_config, server_config};
 use quinn::TokioRuntime;
-use quinn_proto::EndpointConfig;
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::Arc;
 use tokio::io::{join, AsyncReadExt, AsyncWriteExt};
-use tun::PlatformConfig;
 
 // 定义 CLI 结构
 #[derive(Parser)]
@@ -45,6 +45,8 @@ enum Commands {
         listen: SocketAddr,
         #[arg(long, default_value = "10.0.0.1")]
         tun_ip: Ipv4Addr,
+        #[arg(long, default_value = "false")]
+        smoltcp: bool,
     },
     /// 运行客户端 (VPN 模式)
     /// 需 Root 权限: sudo ./target/release/proxy vpn-client --server <SERVER_IP>:4433 --tun-ip 10.0.0.2
@@ -53,6 +55,8 @@ enum Commands {
         server: SocketAddr,
         #[arg(long, default_value = "10.0.0.2")]
         tun_ip: Ipv4Addr,
+        #[arg(long, default_value = "false")]
+        smoltcp: bool,
     },
 }
 
@@ -67,16 +71,51 @@ async fn main() -> Result<()> {
             local,
             target,
         } => run_client(server, local, target).await,
-        Commands::VpnServer { listen, tun_ip } => run_vpn_server(listen, tun_ip).await,
-        Commands::VpnClient { server, tun_ip } => run_vpn_client(server, tun_ip).await,
+        Commands::VpnServer {
+            listen,
+            tun_ip,
+            smoltcp,
+        } => run_vpn_server(listen, tun_ip, smoltcp).await,
+        Commands::VpnClient {
+            server,
+            tun_ip,
+            smoltcp,
+        } => run_vpn_client(server, tun_ip, smoltcp).await,
     }
 }
 
 const TUN_MTU: u16 = 1120;
 
+// ==========================================
+// 辅助函数：简单的私有协议 (传输目标地址)
+// 格式: [Length: u16] [Address String: bytes]
+// ==========================================
+
+async fn write_dst_addr<W: AsyncWriteExt + Unpin>(writer: &mut W, addr: &str) -> Result<()> {
+    let addr_bytes = addr.as_bytes();
+    let len = addr_bytes.len() as u16;
+    writer.write_all(&len.to_be_bytes()).await?;
+    writer.write_all(addr_bytes).await?;
+    Ok(())
+}
+
+async fn read_dst_addr<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<String> {
+    let mut len_buf = [0u8; 2];
+    reader.read_exact(&mut len_buf).await?;
+    let len = u16::from_be_bytes(len_buf) as usize;
+
+    let mut addr_buf = vec![0u8; len];
+    reader.read_exact(&mut addr_buf).await?;
+    let addr_str = String::from_utf8_lossy(&addr_buf).to_string();
+    Ok(addr_str)
+}
+
 // --- 核心逻辑: IP 搬运工 ---
 // 只要连接建立，逻辑对 Client 和 Server 几乎是一样的
-async fn run_tunnel(connection: quinn::Connection, tun_dev: tun::AsyncDevice) -> Result<()> {
+async fn run_datagram_tunnel(
+    connection: quinn::Connection,
+    tun_dev: tun::AsyncDevice,
+) -> Result<()> {
     // 由于 tun crate 的 split 比较麻烦，我们用 Arc<AsyncDevice> + loop select 简单处理
     // 或者直接把 tun 分成 reader/writer (tun crate 支持 into_split)
     let (mut tun_write, mut tun_read) = tun_dev.split()?;
@@ -127,7 +166,7 @@ async fn run_tunnel(connection: quinn::Connection, tun_dev: tun::AsyncDevice) ->
 }
 
 // --- VPN 服务端 ---
-async fn run_vpn_server(listen_addr: SocketAddr, tun_ip: Ipv4Addr) -> Result<()> {
+async fn run_vpn_server(listen_addr: SocketAddr, tun_ip: Ipv4Addr, smoltcp: bool) -> Result<()> {
     // 1. 创建 TUN
     let mut config = tun::Configuration::default();
     config
@@ -159,14 +198,64 @@ async fn run_vpn_server(listen_addr: SocketAddr, tun_ip: Ipv4Addr) -> Result<()>
         println!("+ 客户端已连接: {}", connection.remote_address());
 
         // 进入隧道模式
-        run_tunnel(connection, tun_dev).await?;
+        if smoltcp {
+            println!("✨ 模式: 启用 smoltcp (TCP over Streams)");
+            // === TCP over QUIC Streams (代理模式) ===
+            // 持续接受来自客户端的 Stream
+            loop {
+                match connection.accept_bi().await {
+                    Ok((send_stream, mut recv_stream)) => {
+                        tokio::spawn(async move {
+                            // 1. 读取客户端想去的目标地址
+                            let target_addr = match read_dst_addr(&mut recv_stream).await {
+                                Ok(addr) => addr,
+                                Err(e) => {
+                                    eprintln!("读取目标地址失败: {}", e);
+                                    return;
+                                }
+                            };
+
+                            println!("  -> Proxy Request: {}", target_addr);
+
+                            // 2. 服务端代替客户端连接真实目标
+                            match tokio::net::TcpStream::connect(&target_addr).await {
+                                Ok(mut real_tcp) => {
+                                    let mut quic_stream = join(recv_stream, send_stream);
+                                    // 3. 双向转发
+                                    if let Err(e) = tokio::io::copy_bidirectional(
+                                        &mut quic_stream,
+                                        &mut real_tcp,
+                                    )
+                                        .await
+                                    {
+                                        // 这是一个常见的错误 (连接断开)，debug 级别即可
+                                        log::debug!("代理连接断开 {}: {}", target_addr, e);
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("  ! 连接目标 {} 失败: {}", target_addr, e);
+                                    // 可以选择写回一个错误给客户端，这里直接关闭
+                                }
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        println!("Client 连接结束: {}", e);
+                        break;
+                    }
+                }
+            }
+        } else {
+            println!("✨ 模式: 原生转发 (All over Datagrams)");
+            run_datagram_tunnel(connection, tun_dev).await?
+        }
     }
 
     Ok(())
 }
 
 // --- VPN 客户端 ---
-async fn run_vpn_client(server_addr: SocketAddr, tun_ip: Ipv4Addr) -> Result<()> {
+async fn run_vpn_client(server_addr: SocketAddr, tun_ip: Ipv4Addr, smoltcp: bool) -> Result<()> {
     // 1. 创建 TUN
     let mut config = tun::Configuration::default();
     config
@@ -198,14 +287,124 @@ async fn run_vpn_client(server_addr: SocketAddr, tun_ip: Ipv4Addr) -> Result<()>
     println!("   ip route add 8.8.8.8 dev tun0 (测试用)");
     println!("   或者配置默认路由 (小心不要把连 VPS 的流量也路由进去了!)");
 
-    run_tunnel(connection, tun_dev).await
+    if smoltcp {
+        println!("✨ 模式: 启用 smoltcp (TCP over Streams, UDP over Datagrams)");
+
+        // =========================================================
+        // 新增代码：配置 netstack-smoltcp
+        // =========================================================
+
+        // 1. 构建网络栈
+        // enable_tcp: 拦截并处理 TCP
+        // enable_icmp: 允许 ping 通 tun 网卡 (可选)
+        // enable_udp: 暂时关闭，除非你也要处理 UDP socket
+        let (stack, runner, _udp_socket, tcp_listener) = StackBuilder::default()
+            .enable_tcp(true)
+            .enable_icmp(true)
+            .enable_udp(false)
+            .build()
+            .context("构建网络栈失败")?;
+
+        // 2. 启动栈的驱动器 (Runner)
+        // 这是一个必须在后台运行的 Future，用于驱动 smoltcp 的 poll 循环
+        if let Some(runner) = runner {
+            tokio::spawn(runner);
+        }
+
+        // 3. 获取 TCP 监听器 (拦截到的所有 TCP 连接都会出现在这里)
+        let mut tcp_listener = tcp_listener.context("TCP 未启用")?;
+
+        // 4. 建立数据泵 (Data Pump): 连接 TUN 和 Stack
+        // TUN 和 Stack 都需要拆分成 Read/Write (Stream/Sink)
+        let (mut tun_write, mut tun_read) = tun_dev.split()?;
+        let (mut stack_sink, mut stack_stream) = stack.split();
+
+        // 任务 A: TUN -> Stack (读取操作系统发来的 IP 包 -> 写入用户态协议栈)
+        tokio::spawn(async move {
+            let mut buf = vec![0u8; TUN_MTU as usize];
+            loop {
+                match tun_read.read(&mut buf).await {
+                    Ok(n) if n > 0 => {
+                        // stack_sink 需要 Vec<u8>
+                        if let Err(e) = stack_sink.send(buf[..n].to_vec()).await {
+                            eprintln!("写入 Stack 失败: {}", e);
+                            break;
+                        }
+                    }
+                    Ok(_) => {} // 空读取
+                    Err(e) => {
+                        eprintln!("读取 TUN 失败: {}", e);
+                        break;
+                    }
+                }
+            }
+        });
+
+        // 任务 B: Stack -> TUN (协议栈产生的 IP 包，如 SYN-ACK -> 写入 TUN 让操作系统接收)
+        tokio::spawn(async move {
+            while let Some(pkt) = stack_stream.next().await {
+                match pkt {
+                    Ok(frame) => {
+                        if let Err(e) = tun_write.write_all(&frame).await {
+                            eprintln!("写入 TUN 失败: {}", e);
+                            break;
+                        }
+                    }
+                    Err(e) => eprintln!("Stack 读取错误: {}", e),
+                }
+            }
+        });
+
+        // 5. 处理拦截到的 TCP 连接
+        // 这个循环会源源不断地吐出新的 TcpStream
+        while let Some((stream, local_addr, remote_addr)) = tcp_listener.next().await {
+            // local_addr: 发起请求的源地址 (例如 10.0.0.2:54321)
+            // remote_addr: 用户想要访问的目标地址 (例如 1.1.1.1:80)
+
+            println!("^ 捕获 TCP: {} -> {}", local_addr, remote_addr);
+
+            let connection = connection.clone();
+            tokio::spawn(async move {
+                if let Err(e) = handle_client_stream(connection, stream, remote_addr).await {
+                    eprintln!("流处理错误: {}", e);
+                }
+            });
+        }
+
+        Ok(())
+    } else {
+        println!("✨ 模式: 原生转发 (All over Datagrams)");
+        run_datagram_tunnel(connection, tun_dev).await
+    }
+}
+
+// 抽离出的流处理逻辑
+async fn handle_client_stream(
+    conn: quinn::Connection,
+    mut tun_stream: NetstackTcpStream,
+    target_addr: SocketAddr,
+) -> Result<()> {
+    // 1. 在 QUIC 隧道中开启一个新的流
+    let (mut send_quic, recv_quic) = conn.open_bi().await?;
+
+    // 2. 握手: 告诉服务端目标地址
+    write_dst_addr(&mut send_quic, &target_addr.to_string()).await?;
+
+    // 3. 双向转发
+    // NetstackTcpStream 实现了 Tokio AsyncRead/AsyncWrite，可以直接 copy
+    let mut quic_stream = join(recv_quic, send_quic);
+
+    // netstack-smoltcp 的流完全兼容 tokio，不需要 compat()
+    let _ = tokio::io::copy_bidirectional(&mut tun_stream, &mut quic_stream).await?;
+
+    Ok(())
 }
 
 // --- 服务端逻辑 ---
 
 async fn run_server(addr: SocketAddr) -> Result<()> {
     // 2. 创建 QUIC Endpoint
-    let endpoint = quinn::Endpoint::server(qs::server_config(), addr)?;
+    let endpoint = quinn::Endpoint::server(server_config(), addr)?;
     println!("🚀 服务端监听于 UDP: {}", addr);
 
     // 3. 接受连接
@@ -259,7 +458,7 @@ async fn run_server(addr: SocketAddr) -> Result<()> {
                                 1 << 20,
                                 1 << 20,
                             )
-                            .await;
+                                .await;
                         }
                         Err(e) => {
                             eprintln!("  ! 无法连接到目标 TCP {}: {}", target_str, e);
@@ -277,7 +476,7 @@ async fn run_server(addr: SocketAddr) -> Result<()> {
 
 async fn run_client(server_addr: SocketAddr, local_addr: SocketAddr, target: String) -> Result<()> {
     let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse().unwrap())?;
-    endpoint.set_default_client_config(qs::client_config());
+    endpoint.set_default_client_config(client_config());
 
     println!("⏳ 正在连接到服务端 QUIC {}...", server_addr);
 
@@ -331,7 +530,7 @@ async fn run_client(server_addr: SocketAddr, local_addr: SocketAddr, target: Str
                         1 << 20,
                         1 << 20,
                     )
-                    .await;
+                        .await;
                 }
                 Err(e) => eprintln!("打开 QUIC 流失败: {}", e),
             }
