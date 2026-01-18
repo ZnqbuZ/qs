@@ -1,21 +1,11 @@
-use std::cell::RefCell;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use qs::{client_config, endpoint_config, server_config};
 use quinn::TokioRuntime;
-use smoltcp::iface::{Config, Interface, SocketSet};
-use smoltcp::phy::{TunTapInterface, Device, DeviceCapabilities, Medium, RxToken, TxToken, Checksum};
-use smoltcp::socket::tcp;
-use smoltcp::socket::tcp::State as TcpState;
-use smoltcp::time::Instant;
-use smoltcp::wire::{EthernetFrame, EthernetProtocol, HardwareAddress, IpAddress, IpCidr, IpProtocol, Ipv4Address, Ipv4Packet, TcpPacket};
-use std::collections::{HashMap, VecDeque};
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
-use std::rc::Rc;
 use std::sync::Arc;
 use ipstack::{IpStack, IpStackStream};
 use tokio::io::{join, AsyncReadExt, AsyncWriteExt};
-use tun::AbstractDevice;
 
 // 定义 CLI 结构
 #[derive(Parser)]
@@ -191,7 +181,7 @@ async fn run_vpn_server(listen_addr: SocketAddr, tun_ip: Ipv4Addr, smoltcp: bool
 
     // 简单起见，这里只接受一个客户端连接，或者需要为每个客户端创建不同的 TUN/路由逻辑
     // 为了演示 IP over QUIC，我们假设是一对一，或者所有客户端共享这个 TUN (都在 10.0.0.x 子网)
-    while let Some(conn) = endpoint.accept().await {
+    if let Some(conn) = endpoint.accept().await {
         let connection = conn.await?;
         println!("+ 客户端已连接: {}", connection.remote_address());
 
@@ -285,25 +275,25 @@ async fn run_vpn_client(server_addr: SocketAddr, tun_ip: Ipv4Addr, smoltcp: bool
         let mut ip_stack = IpStack::new(ipstack::IpStackConfig::default(), tun_dev);
 
         // 循环接收来自 TUN 的“连接”
-        while let Some(stream_result) = ip_stack.accept().await {
-            match stream_result {
+        loop {
+            match ip_stack.accept().await {
                 Ok(stream) => {
                     // ipstack 的流可以区分是 TCP 还是 UDP
                     match stream {
-                        IpStackStream::Tcp(mut tcp_stream) => {
-                            let peer_addr = tcp_stream.peer_addr();   // 本机发起请求的端口 (10.0.0.2:xxxx)
-                            let local_addr = tcp_stream.local_addr(); // 用户想要连接的目标 (1.2.3.4:80)
+                        IpStackStream::Tcp(tcp_stream) => {
+                            let local_addr = tcp_stream.local_addr(); // 本机发起请求的端口 (10.0.0.2:xxxx)
+                            let peer_addr = tcp_stream.peer_addr();   // 用户想要连接的目标 (1.2.3.4:80)
 
-                            println!("^ 捕获 TCP: {} -> {}", peer_addr, local_addr);
+                            println!("^ 捕获 TCP: {} -> {}", local_addr, peer_addr);
 
                             let connection = connection.clone();
                             tokio::spawn(async move {
-                                if let Err(e) = handle_client_stream(connection, tcp_stream, local_addr).await {
+                                if let Err(e) = handle_client_stream(connection, tcp_stream, peer_addr).await {
                                     eprintln!("流处理错误: {}", e);
                                 }
                             });
                         }
-                        IpStackStream::Udp(udp_packet) => {
+                        IpStackStream::Udp(_udp_packet) => {
                             // 处理 UDP (如果需要 DNS 或 QUIC over UDP 代理)
                             // 简单演示这里忽略
                             println!("丢弃 UDP 包");
@@ -314,8 +304,6 @@ async fn run_vpn_client(server_addr: SocketAddr, tun_ip: Ipv4Addr, smoltcp: bool
                 Err(e) => eprintln!("ipstack accept error: {}", e),
             }
         }
-
-        Ok(())
     } else {
         println!("✨ 模式: 原生转发 (All over Datagrams)");
         run_datagram_tunnel(connection, tun_dev).await
@@ -348,7 +336,7 @@ async fn handle_client_stream(
 
 async fn run_server(addr: SocketAddr) -> Result<()> {
     // 2. 创建 QUIC Endpoint
-    let endpoint = quinn::Endpoint::server(qs::server_config(), addr)?;
+    let endpoint = quinn::Endpoint::server(server_config(), addr)?;
     println!("🚀 服务端监听于 UDP: {}", addr);
 
     // 3. 接受连接
@@ -420,7 +408,7 @@ async fn run_server(addr: SocketAddr) -> Result<()> {
 
 async fn run_client(server_addr: SocketAddr, local_addr: SocketAddr, target: String) -> Result<()> {
     let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse().unwrap())?;
-    endpoint.set_default_client_config(qs::client_config());
+    endpoint.set_default_client_config(client_config());
 
     println!("⏳ 正在连接到服务端 QUIC {}...", server_addr);
 
