@@ -2,11 +2,15 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use qs::{client_config, endpoint_config, server_config};
 use quinn::TokioRuntime;
-use quinn_proto::EndpointConfig;
+use smoltcp::iface::{Config, Interface, SocketSet};
+use smoltcp::phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken};
+use smoltcp::socket::tcp;
+use smoltcp::time::Instant;
+use smoltcp::wire::{IpAddress, IpCidr, IpProtocol, Ipv4Packet, TcpPacket};
+use std::collections::{HashMap, VecDeque};
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::Arc;
 use tokio::io::{join, AsyncReadExt, AsyncWriteExt};
-use tun::PlatformConfig;
 
 // 定义 CLI 结构
 #[derive(Parser)]
@@ -53,6 +57,8 @@ enum Commands {
         server: SocketAddr,
         #[arg(long, default_value = "10.0.0.2")]
         tun_ip: Ipv4Addr,
+        #[arg(long, default_value = "false")]
+        smoltcp: bool,
     },
 }
 
@@ -68,11 +74,270 @@ async fn main() -> Result<()> {
             target,
         } => run_client(server, local, target).await,
         Commands::VpnServer { listen, tun_ip } => run_vpn_server(listen, tun_ip).await,
-        Commands::VpnClient { server, tun_ip } => run_vpn_client(server, tun_ip).await,
+        Commands::VpnClient { server, tun_ip, smoltcp } => run_vpn_client(server, tun_ip, smoltcp).await,
     }
 }
 
 const TUN_MTU: u16 = 1120;
+
+// --- 1. 修正 Device 实现 (解决 E0276) ---
+
+struct TunBufferDevice<'a> {
+    rx_buf: Option<&'a mut [u8]>,
+    tx_queue: &'a mut VecDeque<Vec<u8>>,
+    mtu: usize,
+}
+
+// 这里的关键是 Token 的定义不要引入多余的生命周期约束
+struct RxBufferToken<'a>(&'a mut [u8]);
+
+impl<'a> RxToken for RxBufferToken<'a> {
+    fn consume<R, F>(self, f: F) -> R
+    where
+        F: FnOnce(&[u8]) -> R,
+    {
+        f(self.0)
+    }
+}
+
+struct TxBufferToken<'a> { queue: &'a mut VecDeque<Vec<u8>> }
+impl<'a> TxToken for TxBufferToken<'a> {
+    fn consume<R, F>(self, len: usize, f: F) -> R
+    where
+        F: FnOnce(&mut [u8]) -> R,
+    {
+        let mut buf = vec![0u8; len];
+        let res = f(&mut buf);
+        self.queue.push_back(buf);
+        res
+    }
+}
+
+impl<'a> Device for TunBufferDevice<'a> {
+    type RxToken<'token> = RxBufferToken<'token> where Self: 'token;
+    type TxToken<'token> = TxBufferToken<'token> where Self: 'token;
+
+    fn receive(&mut self, _timestamp: Instant) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
+        self.rx_buf.take().map(|buf| {
+            (RxBufferToken(buf), TxBufferToken { queue: self.tx_queue })
+        })
+    }
+
+    fn transmit(&mut self, _timestamp: Instant) -> Option<Self::TxToken<'_>> {
+        Some(TxBufferToken { queue: self.tx_queue })
+    }
+
+    fn capabilities(&self) -> DeviceCapabilities {
+        let mut caps = DeviceCapabilities::default();
+        caps.max_transmission_unit = self.mtu;
+        caps.medium = Medium::Ip;
+        caps
+    }
+}
+
+// --- 2. 修正主循环逻辑 (解决 E0499) ---
+
+async fn run_smoltcp_tunnel(connection: quinn::Connection, tun_dev: tun::AsyncDevice) -> Result<()> {
+    let (mut tun_write, mut tun_read) = tun_dev.split()?;
+    let mut tun_buf = vec![0u8; TUN_MTU as usize];
+
+    // 初始化 smoltcp
+    let mut device_config = Config::new(smoltcp::wire::HardwareAddress::Ip);
+    device_config.random_seed = rand::random();
+
+    // 初始化 Interface
+    // 注意：TunBufferDevice 需要在 loop 里动态构建，因为它是对 tun_buf 的借用
+    // 这里我们先创建一个空的 socket set
+    let mut iface = Interface::new(device_config, &mut TunBufferDevice {
+        rx_buf: None, tx_queue: &mut VecDeque::new(), mtu: TUN_MTU as usize
+    }, Instant::now());
+
+    iface.update_ip_addrs(|ips| { ips.push(IpCidr::new(IpAddress::v4(0, 0, 0, 0), 0)).unwrap(); });
+
+    let mut sockets = SocketSet::new(vec![]);
+
+    // Flow 结构体用于管理 QUIC 流
+    struct Flow {
+        send: quinn::SendStream,
+        recv: quinn::RecvStream,
+    }
+    let mut flows: HashMap<smoltcp::iface::SocketHandle, Flow> = HashMap::new();
+    let mut tx_to_tun_queue: VecDeque<Vec<u8>> = VecDeque::new();
+
+    loop {
+        // --- 阶段 1: IO 输入 (tokio::select) ---
+        // 在这一步，我们只收集数据，不要去碰 sockets 或 iface 的内部状态
+
+        let mut tun_input: Option<usize> = None;
+        let mut should_poll = false;
+
+        tokio::select! {
+            // A. 读取 TUN
+            res = tun_read.read(&mut tun_buf) => {
+                match res {
+                    Ok(n) => tun_input = Some(n),
+                    Err(_) => break,
+                }
+            }
+            // B. 读取 UDP Datagram (处理非 TCP 流量)
+            res = connection.read_datagram() => {
+                if let Ok(data) = res {
+                    let _ = tun_write.write_all(&data).await;
+                } else {
+                    break;
+                }
+            }
+            // C. 简单的定时器，保证 loop 滚动以驱动 smoltcp 的重传和超时
+            _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
+                should_poll = true;
+            }
+        }
+
+        let timestamp = Instant::now();
+
+        // --- 阶段 2: 将 TUN 数据注入 smoltcp 并执行 Poll ---
+        // 这是唯一一次借用 sockets 进行全局更新的地方
+
+        { // 作用域开始
+            // 1. 预处理：先通过 buffer 引用进行检查，不消耗所有权
+            let mut consumed_by_smoltcp = false;
+
+            // 使用 if let 简化逻辑，直接借用 tun_buf，而不是创建 rx_slice
+            if let Some(n) = tun_input {
+                let packet_slice = &tun_buf[..n]; // 这里是不可变借用，安全
+
+                if let Ok(ip) = Ipv4Packet::new_checked(packet_slice) {
+                    if ip.next_header() == IpProtocol::Tcp {
+                        consumed_by_smoltcp = true;
+
+                        // 检查 SYN 逻辑：依然使用 packet_slice (不可变借用)
+                        if let Ok(tcp) = TcpPacket::new_checked(ip.payload()) {
+                            if tcp.syn() && !tcp.ack() {
+                                let src = ip.src_addr();
+                                let dst = ip.dst_addr();
+                                let dst_port = tcp.dst_port();
+                                let target_endpoint = smoltcp::wire::IpEndpoint::new(IpAddress::Ipv4(dst), dst_port);
+
+                                // 检查 socket 是否存在
+                                let exists = sockets.iter().any(|(_h, s)| {
+                                    if let smoltcp::socket::Socket::Tcp(t) = s {
+                                        t.local_endpoint() == Some(target_endpoint)
+                                    } else { false }
+                                });
+
+                                if !exists {
+                                    let rx = tcp::SocketBuffer::new(vec![0; 65535]);
+                                    let tx = tcp::SocketBuffer::new(vec![0; 65535]);
+                                    let mut s = tcp::Socket::new(rx, tx);
+                                    if s.listen(target_endpoint).is_ok() {
+                                        sockets.add(s);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 非 TCP 流量直接转发
+                if !consumed_by_smoltcp {
+                    let data = bytes::Bytes::copy_from_slice(packet_slice);
+                    let _ = connection.send_datagram(data);
+                }
+            }
+
+            // 2. 构造 Device：只有在这里才进行可变借用
+            // 如果是 TCP，才把 buf 的可变引用传给 rx_buf
+            let rx_slice_mut = if consumed_by_smoltcp {
+                tun_input.map(|n| &mut tun_buf[..n])
+            } else {
+                None
+            };
+
+            let mut device = TunBufferDevice {
+                rx_buf: rx_slice_mut, // 此时才发生 Move
+                tx_queue: &mut tx_to_tun_queue,
+                mtu: TUN_MTU as usize,
+            };
+
+            // 3. 执行 Poll
+            iface.poll(timestamp, &mut device, &mut sockets);
+
+        } // 作用域结束，device 销毁，tun_buf 借用释放
+        // 现在我们可以安全地遍历 sockets 了。
+
+        // --- 阶段 3: Socket 与 QUIC 数据交换 ---
+
+        let mut to_remove = Vec::new();
+
+        // 这里只遍历，不调用 iface.poll()
+        for (handle, socket) in sockets.iter_mut() {
+            let socket = match socket { smoltcp::socket::Socket::Tcp(s) => s, _ => continue };
+
+            // 3.1 建立新流
+            if socket.state() == tcp::State::Established && !flows.contains_key(&handle) {
+                if let Some(local) = socket.local_endpoint() {
+                    let target = format!("{}:{}", local.addr, local.port);
+                    if let Ok((mut tx, rx)) = connection.open_bi().await {
+                        // 发送头
+                        let b = target.as_bytes();
+                        let _ = tx.write_u16(b.len() as u16).await;
+                        let _ = tx.write_all(b).await;
+                        flows.insert(handle, Flow { send: tx, recv: rx });
+                    } else {
+                        socket.abort();
+                    }
+                }
+            }
+
+            if let Some(flow) = flows.get_mut(&handle) {
+                // 3.2 smoltcp -> QUIC
+                if socket.can_recv() {
+                    while let Ok(data) = socket.recv(|b| (b.len(), b.to_vec())) {
+                        if data.is_empty() { break; }
+                        let _ = flow.send.write_all(&data).await;
+                    }
+                }
+
+                // 3.3 QUIC -> smoltcp
+                // 这是一个 hack：为了避免阻塞 loop，我们只尝试读一次，或者用 timeout(0)
+                if socket.can_send() {
+                    let mut buf = [0u8; 4096];
+                    // 使用极短的 timeout 模拟 try_read
+                    if let Ok(Ok(n)) = tokio::time::timeout(std::time::Duration::from_micros(1), flow.recv.read(&mut buf)).await {
+                        if let Some(n) = n {
+                            // 写入 Socket Buffer
+                            socket.send_slice(&buf[..n]).ok();
+                            // 注意：这里写入了数据，但不会立即触发 TCP ACK，
+                            // ACK 会在下一次循环的 iface.poll() 中发出。这是设计预期的。
+                        } else {
+                            // EOF
+                            socket.close();
+                        }
+                    }
+                }
+
+                if socket.state() == tcp::State::Closed {
+                    let _ = flow.send.finish();
+                    to_remove.push(handle);
+                }
+            }
+        }
+
+        // 清理
+        for h in to_remove {
+            sockets.remove(h);
+            flows.remove(&h);
+        }
+
+        // --- 阶段 4: 发送 Poll 产生的包到 TUN ---
+        // iface.poll() 可能会产生回包（ACK等），存放在 tx_to_tun_queue 中
+        while let Some(packet) = tx_to_tun_queue.pop_front() {
+            let _ = tun_write.write_all(&packet).await;
+        }
+    }
+
+    Ok(())
+}
 
 // --- 核心逻辑: IP 搬运工 ---
 // 只要连接建立，逻辑对 Client 和 Server 几乎是一样的
@@ -166,7 +431,7 @@ async fn run_vpn_server(listen_addr: SocketAddr, tun_ip: Ipv4Addr) -> Result<()>
 }
 
 // --- VPN 客户端 ---
-async fn run_vpn_client(server_addr: SocketAddr, tun_ip: Ipv4Addr) -> Result<()> {
+async fn run_vpn_client(server_addr: SocketAddr, tun_ip: Ipv4Addr, smoltcp: bool) -> Result<()> {
     // 1. 创建 TUN
     let mut config = tun::Configuration::default();
     config
@@ -198,7 +463,13 @@ async fn run_vpn_client(server_addr: SocketAddr, tun_ip: Ipv4Addr) -> Result<()>
     println!("   ip route add 8.8.8.8 dev tun0 (测试用)");
     println!("   或者配置默认路由 (小心不要把连 VPS 的流量也路由进去了!)");
 
-    run_tunnel(connection, tun_dev).await
+    if smoltcp {
+        println!("✨ 模式: 启用 smoltcp (TCP over Streams, UDP over Datagrams)");
+        run_smoltcp_tunnel(connection, tun_dev).await
+    } else {
+        println!("✨ 模式: 原生转发 (All over Datagrams)");
+        run_tunnel(connection, tun_dev).await
+    }
 }
 
 // --- 服务端逻辑 ---
