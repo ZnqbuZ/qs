@@ -302,6 +302,10 @@ async fn run_vpn_client(server_addr: SocketAddr, tun_ip: Ipv4Addr, smoltcp: bool
             .enable_tcp(true)
             .enable_icmp(true)
             .enable_udp(false)
+            // stack_buffer_size 对应 Stack 内部的 channel，不要设太大，1024-2048 足够
+            .stack_buffer_size(2048)
+            // tcp_buffer_size 对应每个 Socket 的接收窗口，大流量下建议加大
+            .tcp_buffer_size(1024 * 1024)
             .build()
             .context("构建网络栈失败")?;
 
