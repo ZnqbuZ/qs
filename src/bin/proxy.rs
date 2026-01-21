@@ -10,6 +10,7 @@ use std::time::Duration;
 use tokio::io::{join, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc::channel;
 use tokio::time::sleep;
+use tokio_stream::wrappers::ReceiverStream;
 
 // 定义 CLI 结构
 #[derive(Parser)]
@@ -341,7 +342,7 @@ async fn run_vpn_client(server_addr: SocketAddr, tun_ip: Ipv4Addr, smoltcp: bool
         let (mut tun_write, mut tun_read) = tun_dev.split()?;
         let (mut stack_sink, mut stack_stream) = stack.split();
 
-        let (packet_tx, mut packet_rx) = channel(128);
+        let (packet_tx, packet_rx) = channel(128);
 
         // 任务 A: TUN -> Stack (读取操作系统发来的 IP 包 -> 写入用户态协议栈)
         tokio::spawn(async move {
@@ -365,8 +366,14 @@ async fn run_vpn_client(server_addr: SocketAddr, tun_ip: Ipv4Addr, smoltcp: bool
         });
 
         tokio::spawn(async move {
-            while let Some(frame) = packet_rx.recv().await {
-                sleep(Duration::from_millis(1)).await;
+            let stream = ReceiverStream::new(packet_rx);
+            let mut stream = stream
+                .map(|frame| async move {
+                    sleep(Duration::from_millis(1)).await;
+                    frame
+                })
+                .buffer_unordered(2048);
+            while let Some(frame) = stream.next().await {
                 if let Err(e) = stack_sink.send(frame).await {
                     eprintln!("写入 channel 失败: {}", e);
                     break;
@@ -374,7 +381,7 @@ async fn run_vpn_client(server_addr: SocketAddr, tun_ip: Ipv4Addr, smoltcp: bool
             }
         });
 
-        let (packet_tx, mut packet_rx) = channel(128);
+        let (packet_tx, packet_rx) = channel(128);
 
         // 任务 B: Stack -> TUN (协议栈产生的 IP 包，如 SYN-ACK -> 写入 TUN 让操作系统接收)
         tokio::spawn(async move {
@@ -392,8 +399,14 @@ async fn run_vpn_client(server_addr: SocketAddr, tun_ip: Ipv4Addr, smoltcp: bool
         });
 
         tokio::spawn(async move {
-            while let Some(frame) = packet_rx.recv().await {
-                sleep(Duration::from_millis(1)).await;
+            let stream = ReceiverStream::new(packet_rx);
+            let mut stream = stream
+                .map(|frame| async move {
+                    sleep(Duration::from_millis(1)).await;
+                    frame
+                })
+                .buffer_unordered(2048);
+            while let Some(frame) = stream.next().await {
                 if let Err(e) = tun_write.write_all(&frame).await {
                     eprintln!("写入 channel 失败: {}", e);
                     break;
