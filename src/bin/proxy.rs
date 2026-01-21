@@ -7,6 +7,7 @@ use quinn::TokioRuntime;
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::Arc;
 use tokio::io::{join, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::sync::mpsc::channel;
 
 // 定义 CLI 结构
 #[derive(Parser)]
@@ -338,6 +339,8 @@ async fn run_vpn_client(server_addr: SocketAddr, tun_ip: Ipv4Addr, smoltcp: bool
         let (mut tun_write, mut tun_read) = tun_dev.split()?;
         let (mut stack_sink, mut stack_stream) = stack.split();
 
+        let (packet_tx, mut packet_rx) = channel(128);
+
         // 任务 A: TUN -> Stack (读取操作系统发来的 IP 包 -> 写入用户态协议栈)
         tokio::spawn(async move {
             let mut buf = vec![0u8; TUN_MTU as usize];
@@ -345,7 +348,7 @@ async fn run_vpn_client(server_addr: SocketAddr, tun_ip: Ipv4Addr, smoltcp: bool
                 match tun_read.read(&mut buf).await {
                     Ok(n) if n > 0 => {
                         // stack_sink 需要 Vec<u8>
-                        if let Err(e) = stack_sink.send(buf[..n].to_vec()).await {
+                        if let Err(e) = packet_tx.send(buf[..n].to_vec()).await {
                             eprintln!("写入 Stack 失败: {}", e);
                             break;
                         }
@@ -359,17 +362,37 @@ async fn run_vpn_client(server_addr: SocketAddr, tun_ip: Ipv4Addr, smoltcp: bool
             }
         });
 
+        tokio::spawn(async move {
+            while let Some(frame) = packet_rx.recv().await {
+                if let Err(e) = stack_sink.send(frame).await {
+                    eprintln!("写入 channel 失败: {}", e);
+                    break;
+                }
+            }
+        });
+
+        let (packet_tx, mut packet_rx) = channel(128);
+
         // 任务 B: Stack -> TUN (协议栈产生的 IP 包，如 SYN-ACK -> 写入 TUN 让操作系统接收)
         tokio::spawn(async move {
             while let Some(pkt) = stack_stream.next().await {
                 match pkt {
                     Ok(frame) => {
-                        if let Err(e) = tun_write.write_all(&frame).await {
-                            eprintln!("写入 TUN 失败: {}", e);
+                        if let Err(e) = packet_tx.send(frame).await {
+                            eprintln!("写入 channel 失败: {}", e);
                             break;
                         }
                     }
                     Err(e) => eprintln!("Stack 读取错误: {}", e),
+                }
+            }
+        });
+
+        tokio::spawn(async move {
+            while let Some(frame) = packet_rx.recv().await {
+                if let Err(e) = tun_write.write_all(&frame).await {
+                    eprintln!("写入 channel 失败: {}", e);
+                    break;
                 }
             }
         });
