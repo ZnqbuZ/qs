@@ -11,7 +11,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     config
         .protoc_arg("--experimental_allow_proto3_optional")
         .type_attribute(".common", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .btree_map(["."]);
+        .btree_map(["."])
+        .skip_debug([".common.Ipv4Addr", ".common.Ipv6Addr"]);;
 
     config.compile_protos(&proto_files, &["src/proto/"])?;
 

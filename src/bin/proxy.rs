@@ -2,7 +2,9 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use futures::{SinkExt, StreamExt};
 use netstack_smoltcp::{StackBuilder, TcpStream as NetstackTcpStream};
-use qs::{client_config, endpoint_config, run_stream_monitor, server_config, MonitoredStream};
+use prost::Message;
+use qs::utils::{client_config, endpoint_config, run_stream_monitor, server_config, MonitoredStream};
+use qs::proto::common::ProxyDstInfo;
 use quinn::TokioRuntime;
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::Arc;
@@ -459,10 +461,9 @@ async fn handle_client_stream(
             dst_addr: Some(target_addr.into()),
         };
         // 序列化
-        let mut buf = Vec::new();
-        proxy_info.encode(&mut buf)?;
+        let proxy_info_buf = proxy_info.encode_to_vec();
 
-        let len = buf.len() as u8; // 注意：quic_proxy 使用 u8 长度前缀
+        let len = proxy_info_buf.len() as u8; // 注意：quic_proxy 使用 u8 长度前缀
 
         // 发送: [u8 Length] [Protobuf Bytes]
         send_quic
@@ -470,7 +471,7 @@ async fn handle_client_stream(
             .await
             .context("failed to write len")?;
         send_quic
-            .write_all(&buf)
+            .write_all(&proxy_info_buf)
             .await
             .context("failed to write proxy dst info")?;
 
