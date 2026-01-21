@@ -6,8 +6,10 @@ use qs::{client_config, endpoint_config, run_stream_monitor, server_config, Moni
 use quinn::TokioRuntime;
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{join, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc::channel;
+use tokio::time::sleep;
 
 // 定义 CLI 结构
 #[derive(Parser)]
@@ -364,6 +366,7 @@ async fn run_vpn_client(server_addr: SocketAddr, tun_ip: Ipv4Addr, smoltcp: bool
 
         tokio::spawn(async move {
             while let Some(frame) = packet_rx.recv().await {
+                sleep(Duration::from_millis(1)).await;
                 if let Err(e) = stack_sink.send(frame).await {
                     eprintln!("写入 channel 失败: {}", e);
                     break;
@@ -390,6 +393,7 @@ async fn run_vpn_client(server_addr: SocketAddr, tun_ip: Ipv4Addr, smoltcp: bool
 
         tokio::spawn(async move {
             while let Some(frame) = packet_rx.recv().await {
+                sleep(Duration::from_millis(1)).await;
                 if let Err(e) = tun_write.write_all(&frame).await {
                     eprintln!("写入 channel 失败: {}", e);
                     break;
