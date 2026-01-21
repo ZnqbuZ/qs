@@ -1,3 +1,8 @@
 [submodule "netstack-smoltcp"]
 	path = netstack-smoltcp
 	url = git@github.com:ZnqbuZ/netstack-smoltcp
+	branch = main
+[submodule "smoltcp"]
+	path = smoltcp
+	url = git@github.com:ZnqbuZ/smoltcp
+	branch = main
