@@ -21,9 +21,21 @@
         <feature name="default" enabled="true" />
       </package>
     </cargoProject>
+    <cargoProject FILE="$PROJECT_DIR$/netstack-smoltcp/Cargo.toml">
+      <package file="$PROJECT_DIR$/netstack-smoltcp">
+        <feature name="default" enabled="true" />
+      </package>
+    </cargoProject>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="ec1f0d40-3ac5-4f78-ac6d-97b72ebc55d6" name="更改" comment="disable GSO, remove TCP_NODELAY from proxy" />
+    <list default="true" id="ec1f0d40-3ac5-4f78-ac6d-97b72ebc55d6" name="更改" comment="add qlog">
+      <change beforePath="$PROJECT_DIR$/.idea/vcs.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Cargo.lock" beforeDir="false" afterPath="$PROJECT_DIR$/Cargo.lock" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/Cargo.toml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/bin/proxy.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/bin/proxy.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/utils.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/utils.rs" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -38,7 +50,7 @@
     </persistenceIdMap>
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="3223" />
+    <option name="cachedIndexableFilesCount" value="38" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
   <component name="ExecutionTargetManager" SELECTED_TARGET="RsBuildProfile:release" />
@@ -52,7 +64,7 @@
   <component name="Git.Settings">
     <option name="RECENT_BRANCH_BY_REPOSITORY">
       <map>
-        <entry key="$PROJECT_DIR$" value="master" />
+        <entry key="$PROJECT_DIR$" value="quinn-test" />
       </map>
     </option>
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
@@ -104,7 +116,7 @@
     &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
     &quot;cf.first.check.clang-format&quot;: &quot;false&quot;,
     &quot;cidr.known.project.marker&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;quinn-test&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;quinn-test-smoltcp&quot;,
     &quot;last_opened_file_path&quot;: &quot;/home/luna/RustroverProjects/qs&quot;,
     &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
     &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
@@ -179,12 +191,13 @@
       </method>
     </configuration>
     <list>
-      <item itemvalue="Cargo.Run bandwidth" />
       <item itemvalue="Cargo.Run proxy" />
       <item itemvalue="Cargo.Test" />
+      <item itemvalue="Cargo.Run bandwidth" />
     </list>
     <recent_temporary>
       <list>
+        <item itemvalue="Cargo.Run bandwidth" />
         <item itemvalue="Cargo.Run bandwidth" />
       </list>
     </recent_temporary>
@@ -205,6 +218,7 @@
       <workItem from="1767910931766" duration="651000" />
       <workItem from="1767947959986" duration="16408000" />
       <workItem from="1768592926090" duration="2799000" />
+      <workItem from="1768985992765" duration="1004000" />
     </task>
     <task id="LOCAL-00001" summary="better display">
       <option name="closed" value="true" />
@@ -230,7 +244,39 @@
       <option name="project" value="LOCAL" />
       <updated>1768596497903</updated>
     </task>
-    <option name="localTasksCounter" value="4" />
+    <task id="LOCAL-00004" summary="add netstack-smoltcp as submodule">
+      <option name="closed" value="true" />
+      <created>1768745408758</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1768745408758</updated>
+    </task>
+    <task id="LOCAL-00005" summary="adjust netstack params">
+      <option name="closed" value="true" />
+      <created>1768746098575</created>
+      <option name="number" value="00005" />
+      <option name="presentableId" value="LOCAL-00005" />
+      <option name="project" value="LOCAL" />
+      <updated>1768746098575</updated>
+    </task>
+    <task id="LOCAL-00006" summary="update submodule">
+      <option name="closed" value="true" />
+      <created>1768746168671</created>
+      <option name="number" value="00006" />
+      <option name="presentableId" value="LOCAL-00006" />
+      <option name="project" value="LOCAL" />
+      <updated>1768746168671</updated>
+    </task>
+    <task id="LOCAL-00007" summary="add qlog">
+      <option name="closed" value="true" />
+      <created>1768986046258</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1768986046258</updated>
+    </task>
+    <option name="localTasksCounter" value="8" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -251,7 +297,12 @@
     <MESSAGE value="better display" />
     <MESSAGE value="change unit of total size to MB" />
     <MESSAGE value="disable GSO, remove TCP_NODELAY from proxy" />
-    <option name="LAST_COMMIT_MESSAGE" value="disable GSO, remove TCP_NODELAY from proxy" />
+    <MESSAGE value="add netstack-smoltcp as submodule" />
+    <MESSAGE value="adjust netstack params" />
+    <MESSAGE value="use bounded channel" />
+    <MESSAGE value="update submodule" />
+    <MESSAGE value="add qlog" />
+    <option name="LAST_COMMIT_MESSAGE" value="add qlog" />
   </component>
   <component name="XSLT-Support.FileAssociations.UIState">
     <expand />
