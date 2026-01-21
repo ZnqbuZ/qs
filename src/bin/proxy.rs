@@ -2,11 +2,11 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use futures::{SinkExt, StreamExt};
 use netstack_smoltcp::{StackBuilder, TcpStream as NetstackTcpStream};
-use qs::{client_config, endpoint_config, server_config};
+use qs::{client_config, endpoint_config, run_stream_monitor, server_config, MonitoredStream};
 use quinn::TokioRuntime;
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::Arc;
-use tokio::io::{join, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{join, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 // 定义 CLI 结构
 #[derive(Parser)]
@@ -167,6 +167,8 @@ async fn run_datagram_tunnel(
 
 // --- VPN 服务端 ---
 async fn run_vpn_server(listen_addr: SocketAddr, tun_ip: Ipv4Addr, smoltcp: bool) -> Result<()> {
+    run_stream_monitor();
+
     // 1. 创建 TUN
     let mut config = tun::Configuration::default();
     config
@@ -195,7 +197,8 @@ async fn run_vpn_server(listen_addr: SocketAddr, tun_ip: Ipv4Addr, smoltcp: bool
     // 为了演示 IP over QUIC，我们假设是一对一，或者所有客户端共享这个 TUN (都在 10.0.0.x 子网)
     if let Some(conn) = endpoint.accept().await {
         let connection = conn.await?;
-        println!("+ 客户端已连接: {}", connection.remote_address());
+        let remote_addr = connection.remote_address();
+        println!("+ 客户端已连接: {}", remote_addr);
 
         // 进入隧道模式
         if smoltcp {
@@ -219,14 +222,24 @@ async fn run_vpn_server(listen_addr: SocketAddr, tun_ip: Ipv4Addr, smoltcp: bool
 
                             // 2. 服务端代替客户端连接真实目标
                             match tokio::net::TcpStream::connect(&target_addr).await {
-                                Ok(mut real_tcp) => {
-                                    let mut quic_stream = join(recv_stream, send_stream);
+                                Ok(real_tcp) => {
+                                    let mut real_tcp = MonitoredStream::new(
+                                        real_tcp,
+                                        format!("TCP TO: {}", target_addr).as_str(),
+                                    );
+
+                                    let quic_stream = join(recv_stream, send_stream);
+                                    let mut quic_stream = MonitoredStream::new(
+                                        quic_stream,
+                                        format!("QUIC FROM: {}", remote_addr).as_str(),
+                                    );
+
                                     // 3. 双向转发
                                     if let Err(e) = tokio::io::copy_bidirectional(
                                         &mut quic_stream,
                                         &mut real_tcp,
                                     )
-                                        .await
+                                    .await
                                     {
                                         // 这是一个常见的错误 (连接断开)，debug 级别即可
                                         log::debug!("代理连接断开 {}: {}", target_addr, e);
@@ -256,6 +269,8 @@ async fn run_vpn_server(listen_addr: SocketAddr, tun_ip: Ipv4Addr, smoltcp: bool
 
 // --- VPN 客户端 ---
 async fn run_vpn_client(server_addr: SocketAddr, tun_ip: Ipv4Addr, smoltcp: bool) -> Result<()> {
+    run_stream_monitor();
+
     // 1. 创建 TUN
     let mut config = tun::Configuration::default();
     config
@@ -367,6 +382,8 @@ async fn run_vpn_client(server_addr: SocketAddr, tun_ip: Ipv4Addr, smoltcp: bool
 
             println!("^ 捕获 TCP: {} -> {}", local_addr, remote_addr);
 
+            let stream = MonitoredStream::new(stream, format!("TCP FROM: {}", local_addr).as_str());
+
             let connection = connection.clone();
             tokio::spawn(async move {
                 if let Err(e) = handle_client_stream(connection, stream, remote_addr).await {
@@ -385,7 +402,7 @@ async fn run_vpn_client(server_addr: SocketAddr, tun_ip: Ipv4Addr, smoltcp: bool
 // 抽离出的流处理逻辑
 async fn handle_client_stream(
     conn: quinn::Connection,
-    mut tun_stream: NetstackTcpStream,
+    mut tun_stream: impl AsyncRead + AsyncWrite + Unpin,
     target_addr: SocketAddr,
 ) -> Result<()> {
     // 1. 在 QUIC 隧道中开启一个新的流
@@ -396,7 +413,9 @@ async fn handle_client_stream(
 
     // 3. 双向转发
     // NetstackTcpStream 实现了 Tokio AsyncRead/AsyncWrite，可以直接 copy
-    let mut quic_stream = join(recv_quic, send_quic);
+    let quic_stream = join(recv_quic, send_quic);
+    let mut quic_stream =
+        MonitoredStream::new(quic_stream, format!("QUIC TO: {}", target_addr).as_str());
 
     // netstack-smoltcp 的流完全兼容 tokio，不需要 compat()
     let _ = tokio::io::copy_bidirectional(&mut tun_stream, &mut quic_stream).await?;
@@ -462,7 +481,7 @@ async fn run_server(addr: SocketAddr) -> Result<()> {
                                 1 << 20,
                                 1 << 20,
                             )
-                                .await;
+                            .await;
                         }
                         Err(e) => {
                             eprintln!("  ! 无法连接到目标 TCP {}: {}", target_str, e);
@@ -534,7 +553,7 @@ async fn run_client(server_addr: SocketAddr, local_addr: SocketAddr, target: Str
                         1 << 20,
                         1 << 20,
                     )
-                        .await;
+                    .await;
                 }
                 Err(e) => eprintln!("打开 QUIC 流失败: {}", e),
             }
