@@ -1,19 +1,45 @@
+use chrono::Utc;
 use quinn::congestion::BbrConfig;
 use quinn::ClientConfig;
+use quinn::EndpointConfig;
 use quinn::ServerConfig;
 use quinn::TransportConfig;
 use quinn::VarInt;
+use quinn_proto::QlogConfig;
+use rand::distr::Alphanumeric;
+use rand::{rng, Rng};
+use std::fs::File;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
-use quinn::EndpointConfig;
-use quinn_proto::congestion::CubicConfig;
+
+const QLOG: bool = false;
 
 pub fn transport_config() -> Arc<TransportConfig> {
-    // TODO: subject to change
+    let qlog_stream = if !QLOG {
+        None
+    } else {
+        let qlog_path = format!(
+            "/home/luna/qlog/qs-{}-{}.qlog",
+            Utc::now().format("%H%M%S.%3f"),
+            rng()
+                .sample_iter(Alphanumeric)
+                .take(4)
+                .map(char::from)
+                .collect::<String>()
+        );
+        let qlog_path = Path::new(&qlog_path);
+        let qlog_file = Box::new(File::create(&*qlog_path).unwrap());
+        let mut qlog_config = QlogConfig::default();
+        qlog_config.writer(qlog_file);
+        Some(qlog_config.into_stream().unwrap())
+    };
 
+    // TODO: subject to change
     let mut config = TransportConfig::default();
 
     config
+        // .qlog_stream(qlog_stream)
         .stream_receive_window(VarInt::from_u32(64 * 1024 * 1024))
         .receive_window(VarInt::from_u32(1024 * 1024 * 1024))
         .send_window(1024 * 1024 * 1024)
