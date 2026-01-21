@@ -1,0 +1,7 @@
+syntax = "proto3";
+
+import "error.proto";
+
+package common;
+
+message ProxyDstInfo { SocketAddr dst_addr = 1; }

@@ -61,6 +61,8 @@ enum Commands {
         tun_ip: Ipv4Addr,
         #[arg(long, default_value = "false")]
         smoltcp: bool,
+        #[arg(long, default_value = "false")]
+        test: bool,
     },
 }
 
@@ -84,7 +86,8 @@ async fn main() -> Result<()> {
             server,
             tun_ip,
             smoltcp,
-        } => run_vpn_client(server, tun_ip, smoltcp).await,
+            test,
+        } => run_vpn_client(server, tun_ip, smoltcp, test).await,
     }
 }
 
@@ -272,7 +275,7 @@ async fn run_vpn_server(listen_addr: SocketAddr, tun_ip: Ipv4Addr, smoltcp: bool
 }
 
 // --- VPN 客户端 ---
-async fn run_vpn_client(server_addr: SocketAddr, tun_ip: Ipv4Addr, smoltcp: bool) -> Result<()> {
+async fn run_vpn_client(server_addr: SocketAddr, tun_ip: Ipv4Addr, smoltcp: bool, test: bool) -> Result<()> {
     run_stream_monitor();
 
     // 1. 创建 TUN
@@ -426,7 +429,7 @@ async fn run_vpn_client(server_addr: SocketAddr, tun_ip: Ipv4Addr, smoltcp: bool
 
             let connection = connection.clone();
             tokio::spawn(async move {
-                if let Err(e) = handle_client_stream(connection, stream, remote_addr).await {
+                if let Err(e) = handle_client_stream(connection, stream, remote_addr, test).await {
                     eprintln!("流处理错误: {}", e);
                 }
             });
@@ -444,12 +447,39 @@ async fn handle_client_stream(
     conn: quinn::Connection,
     mut tun_stream: impl AsyncRead + AsyncWrite + Unpin,
     target_addr: SocketAddr,
+    test: bool,
 ) -> Result<()> {
     // 1. 在 QUIC 隧道中开启一个新的流
     let (mut send_quic, recv_quic) = conn.open_bi().await?;
 
-    // 2. 握手: 告诉服务端目标地址
-    write_dst_addr(&mut send_quic, &target_addr.to_string()).await?;
+    if test {
+        // === 模式 B: 测试 quic_proxy 逻辑 ===
+        // 构造 ProxyDstInfo
+        let proxy_info = ProxyDstInfo {
+            dst_addr: Some(target_addr.into()),
+        };
+        // 序列化
+        let mut buf = Vec::new();
+        proxy_info.encode(&mut buf)?;
+
+        let len = buf.len() as u8; // 注意：quic_proxy 使用 u8 长度前缀
+
+        // 发送: [u8 Length] [Protobuf Bytes]
+        send_quic
+            .write_u8(len)
+            .await
+            .context("failed to write len")?;
+        send_quic
+            .write_all(&buf)
+            .await
+            .context("failed to write proxy dst info")?;
+
+        println!("  -> [Test] Sent ProxyDstInfo to {}", target_addr);
+    } else {
+        // === 模式 A: 原始 qs 逻辑 ===
+        // 2. 握手: 告诉服务端目标地址
+        write_dst_addr(&mut send_quic, &target_addr.to_string()).await?;
+    }
 
     // 3. 双向转发
     // NetstackTcpStream 实现了 Tokio AsyncRead/AsyncWrite，可以直接 copy
